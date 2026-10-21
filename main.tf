@@ -79,9 +79,10 @@ resource "aws_subnet" "private_subnet_2_19thoct" {
   }
 }
 
-resource "aws_security_group" "sg_19thoct" {
+#creating security group for jenkins
+resource "aws_security_group" "jenkins_sg_19thoct" {
   name        = "19thoct-sg"
-  description = "Security group for 19thoct project"
+  description = "Security group for 19thoct jenkins project"
   vpc_id      = aws_vpc.vpc_19thoct.id
 
   ingress {
@@ -92,8 +93,8 @@ resource "aws_security_group" "sg_19thoct" {
   }
 
   ingress {
-    from_port   = 80
-    to_port     = 80
+    from_port   = 8080
+    to_port     = 8080
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -110,6 +111,223 @@ resource "aws_security_group" "sg_19thoct" {
     Project = "19thoct"
   }
 }
+
+#creating security group for ansible
+resource "aws_security_group" "ansible_sg_19thoct" {
+  name        = "19thoct-ansible-sg"
+  description = "Security group for 19thoct Ansible project"
+  vpc_id      = aws_vpc.vpc_19thoct.id
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name    = "19thoct-ansible-sg"
+    Project = "19thoct"
+  }
+}
+
+#creating security group for ALB
+resource "aws_security_group" "alb_19thoct" {
+  name        = "19thoct-alb-sg"
+  description = "Security group for 19thoct ALB project"
+  vpc_id      = aws_vpc.vpc_19thoct.id
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name    = "19thoct-alb-sg"
+    Project = "19thoct"
+  }
+}
+
+#creating security group for sonarqube
+resource "aws_security_group" "sonarqube_sg_19thoct" {
+  name        = "19thoct-sonarqube-sg"
+  description = "Security group for 19thoct SonarQube project"
+  vpc_id      = aws_vpc.vpc_19thoct.id
+
+  ingress {
+    from_port   = 9000
+    to_port     = 9000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name    = "19thoct-sonarqube-sg"
+    Project = "19thoct"
+  }
+}
+
+#creating security group for nexus
+resource "aws_security_group" "nexus_sg_19thoct" {
+  name        = "19thoct-nexus-sg"
+  description = "Security group for 19thoct Nexus project"
+  vpc_id      = aws_vpc.vpc_19thoct.id
+
+  ingress {
+    from_port   = 8081
+    to_port     = 8081
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+ingress {
+    from_port   = 8085
+    to_port     = 8085
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  } 
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name    = "19thoct-nexus-sg"
+    Project = "19thoct"
+  }
+}
+
+#creating security group for docker hosts
+resource "aws_security_group" "docker_hosts_sg_19thoct" {
+  name        = "19thoct-docker-hosts-sg"
+  description = "Security group for 19thoct Docker Hosts project"
+  vpc_id      = aws_vpc.vpc_19thoct.id
+
+  ingress {
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  } 
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name    = "19thoct-docker-hosts-sg"
+    Project = "19thoct"
+  }
+}
+
+#creating security group for bastion host
+resource "aws_security_group" "bastion_sg_19thoct" {
+  name        = "19thoct-bastion-sg"
+  description = "Security group for 19thoct Bastion Host project"
+  vpc_id      = aws_vpc.vpc_19thoct.id
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name    = "19thoct-bastion-sg"
+    Project = "19thoct"
+  }
+}
+
+#creating security group for RDS  
+resource "aws_security_group" "rds_sg_19thoct" {
+  name        = "19thoct-rds-sg"
+  description = "Security group for 19thoct RDS project"
+  vpc_id      = aws_vpc.vpc_19thoct.id
+
+  ingress {
+    from_port   = 3306
+    to_port     = 3306
+    protocol    = "tcp"
+    security_groups = [aws_security_group.docker_hosts_sg_19thoct.id, aws_security_group.bastion_sg_19thoct.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name    = "19thoct-rds-sg"
+    Project = "19thoct"
+  }
+}
+
 
 resource "tls_private_key" "key_19thoct" {
   algorithm = "RSA"
@@ -205,3 +423,4 @@ resource "aws_route_table_association" "private_rta_2_19thoct" {
   subnet_id      = aws_subnet.private_subnet_2_19thoct.id
   route_table_id = aws_route_table.private_rt_19thoct.id
 }
+
