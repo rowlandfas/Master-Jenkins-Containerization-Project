@@ -21,6 +21,14 @@ resource "aws_vpc" "vpc_19thoct" {
   }
 }
 
+resource "aws_internet_gateway" "igw_19thoct" {
+  vpc_id = aws_vpc.vpc_19thoct.id
+
+  tags = {
+    Name    = "19thoct-igw"
+    Project = "19thoct"
+  }
+}
 # ---------- Subnets (Kenneth) ----------
 
 # Public subnets: bastion host, NAT gateways, load balancer
