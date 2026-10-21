@@ -70,5 +70,49 @@ resource "aws_key_pair" "key_pair_19thoct" {
 }
 
 
+#creating elastic ip for nat gateway 1
+resource "aws_eip" "nat_eip_1_19thoct" {
+  domain = "vpc"
+
+  tags = {
+    Name    = "19thoct-nat-eip-1"
+    Project = "19thoct"
+  }
+}
+
+#creating elastic ip for nat gateway 2
+resource "aws_eip" "nat_eip_2_19thoct" {
+  domain = "vpc"
+
+  tags = {
+    Name    = "19thoct-nat-eip-2"
+    Project = "19thoct"
+  }
+}
+
+#creating nat gateway 1
+resource "aws_nat_gateway" "nat_19thoct" {
+  allocation_id = aws_eip.nat_eip_1_19thoct.id
+  subnet_id     = aws_subnet.public_subnet_1_19thoct.id
+
+  tags = {
+    Name    = "19thoct-nat-gateway-1"
+    Project = "19thoct"
+  }
+}
+
+#creating nat gateway 2
+resource "aws_nat_gateway" "nat_2_19thoct" {
+  allocation_id = aws_eip.nat_eip_2_19thoct.id
+  subnet_id     = aws_subnet.public_subnet_2_19thoct.id
+
+  tags = {
+    Name    = "19thoct-nat-gateway-2"
+    Project = "19thoct"
+  }
+}
+
+
+
 
 
