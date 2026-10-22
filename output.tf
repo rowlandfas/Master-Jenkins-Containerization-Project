@@ -31,7 +31,7 @@ output "ansible_public_ip" {
 
 output "ansible_private_ip" {
   value = aws_instance.ansible_19thoct.private_ip
-} 
+}
 # ---------- Docker host outputs (Kenneth) ----------
 output "docker_hosts_asg_name" {
   description = "Name of the Docker hosts auto scaling group"
