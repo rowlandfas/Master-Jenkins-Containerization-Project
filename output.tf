@@ -18,3 +18,14 @@ output "private_subnet_ids" {
   description = "IDs of the 19thoct private subnets"
   value       = [aws_subnet.private_subnet_1_19thoct.id, aws_subnet.private_subnet_2_19thoct.id]
 }
+
+# ---------- Docker host outputs (Kenneth) ----------
+output "docker_hosts_asg_name" {
+  description = "Name of the Docker hosts auto scaling group"
+  value       = aws_autoscaling_group.docker_hosts_asg_19thoct.name
+}
+
+output "docker_hosts_sg_id" {
+  description = "Security group ID of the Docker hosts"
+  value       = aws_security_group.docker_hosts_sg_19thoct.id
+}

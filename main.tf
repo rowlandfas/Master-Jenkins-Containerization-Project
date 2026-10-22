@@ -223,12 +223,12 @@ resource "aws_security_group" "nexus_sg_19thoct" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-ingress {
+  ingress {
     from_port   = 8085
     to_port     = 8085
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
-  } 
+  }
 
   egress {
     from_port   = 0
@@ -244,24 +244,27 @@ ingress {
 }
 
 #creating security group for docker hosts
+# Ticket: Create Docker Host - ports open only to approved sources
 resource "aws_security_group" "docker_hosts_sg_19thoct" {
   name        = "19thoct-docker-hosts-sg"
   description = "Security group for 19thoct Docker Hosts project"
   vpc_id      = aws_vpc.vpc_19thoct.id
 
   ingress {
-    from_port   = 8080
-    to_port     = 8080
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    description     = "BankApp traffic from the load balancer only"
+    from_port       = 8080
+    to_port         = 8080
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb_19thoct.id]
   }
 
   ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  } 
+    description     = "SSH from bastion and Ansible only"
+    from_port       = 22
+    to_port         = 22
+    protocol        = "tcp"
+    security_groups = [aws_security_group.bastion_sg_19thoct.id, aws_security_group.ansible_sg_19thoct.id]
+  }
 
   egress {
     from_port   = 0
@@ -309,9 +312,9 @@ resource "aws_security_group" "rds_sg_19thoct" {
   vpc_id      = aws_vpc.vpc_19thoct.id
 
   ingress {
-    from_port   = 3306
-    to_port     = 3306
-    protocol    = "tcp"
+    from_port       = 3306
+    to_port         = 3306
+    protocol        = "tcp"
     security_groups = [aws_security_group.docker_hosts_sg_19thoct.id, aws_security_group.bastion_sg_19thoct.id]
   }
 
@@ -424,3 +427,181 @@ resource "aws_route_table_association" "private_rta_2_19thoct" {
   route_table_id = aws_route_table.private_rt_19thoct.id
 }
 
+# ---------- Docker hosts (Kenneth) ----------
+
+# Latest Ubuntu 22.04 LTS image from Canonical
+data "aws_ami" "ubuntu_19thoct" {
+  most_recent = true
+  owners      = ["099720109477"] # Canonical
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
+# IAM role so the Docker hosts can be managed through SSM Session Manager
+resource "aws_iam_role" "docker_hosts_role_19thoct" {
+  name = "19thoct-docker-hosts-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "ec2.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+
+  tags = {
+    Name    = "19thoct-docker-hosts-role"
+    Project = "19thoct"
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "docker_hosts_ssm_19thoct" {
+  role       = aws_iam_role.docker_hosts_role_19thoct.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_instance_profile" "docker_hosts_profile_19thoct" {
+  name = "19thoct-docker-hosts-profile"
+  role = aws_iam_role.docker_hosts_role_19thoct.name
+}
+
+# Launch template: how every Docker host is built
+resource "aws_launch_template" "docker_hosts_lt_19thoct" {
+  name_prefix   = "19thoct-docker-hosts-"
+  image_id      = data.aws_ami.ubuntu_19thoct.id
+  instance_type = var.docker_instance_type
+  key_name      = aws_key_pair.key_pair_19thoct.key_name
+
+  vpc_security_group_ids = [aws_security_group.docker_hosts_sg_19thoct.id]
+
+  iam_instance_profile {
+    name = aws_iam_instance_profile.docker_hosts_profile_19thoct.name
+  }
+
+  # Require IMDSv2 so instance credentials can't be stolen through the old metadata endpoint
+  metadata_options {
+    http_tokens   = "required"
+    http_endpoint = "enabled"
+  }
+
+  # Encrypted disk for images, containers and logs
+  block_device_mappings {
+    device_name = "/dev/sda1"
+
+    ebs {
+      volume_size           = 20
+      volume_type           = "gp3"
+      encrypted             = true
+      delete_on_termination = true
+    }
+  }
+
+  user_data = base64encode(<<-EOF
+    #!/bin/bash
+    set -euo pipefail
+
+    # Install Docker Engine from Docker's official repository
+    apt-get update -y
+    apt-get install -y ca-certificates curl gnupg
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    chmod a+r /etc/apt/keyrings/docker.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
+    apt-get update -y
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+    # Docker daemon settings:
+    # - rotate container logs so the disk never fills up
+    # - keep containers running if the Docker daemon restarts
+    # The daemon only listens on the local socket, never on a network port
+    mkdir -p /etc/docker
+    cat > /etc/docker/daemon.json <<'JSON'
+    {
+      "log-driver": "json-file",
+      "log-opts": { "max-size": "10m", "max-file": "3" },
+      "live-restore": true
+    }
+    JSON
+
+    # Folder for any persistent application data
+    mkdir -p /opt/bankapp/data
+    chown ubuntu:ubuntu /opt/bankapp/data
+
+    # Only root and the ubuntu user (used by Ansible) can control Docker
+    usermod -aG docker ubuntu
+
+    # Start Docker now and on every boot
+    systemctl enable docker
+    systemctl restart docker
+  EOF
+  )
+
+  tag_specifications {
+    resource_type = "instance"
+
+    tags = {
+      Name    = "19thoct-docker-host"
+      Project = "19thoct"
+      Role    = "docker-host"
+    }
+  }
+
+  tags = {
+    Name    = "19thoct-docker-hosts-lt"
+    Project = "19thoct"
+  }
+}
+
+# Auto scaling group: keeps Docker hosts running across both private subnets
+resource "aws_autoscaling_group" "docker_hosts_asg_19thoct" {
+  name                = "19thoct-docker-hosts-asg"
+  min_size            = var.docker_min_size
+  desired_capacity    = var.docker_desired_capacity
+  max_size            = var.docker_max_size
+  vpc_zone_identifier = [aws_subnet.private_subnet_1_19thoct.id, aws_subnet.private_subnet_2_19thoct.id]
+
+  # EC2 health checks for now. Switch to "ELB" once the load balancer target group exists.
+  # 300 seconds gives each host time to finish installing Docker before it is checked.
+  health_check_type         = "EC2"
+  health_check_grace_period = 300
+
+  launch_template {
+    id      = aws_launch_template.docker_hosts_lt_19thoct.id
+    version = "$Latest"
+  }
+
+  tag {
+    key                 = "Name"
+    value               = "19thoct-docker-host"
+    propagate_at_launch = true
+  }
+
+  tag {
+    key                 = "Project"
+    value               = "19thoct"
+    propagate_at_launch = true
+  }
+}
+
+# Add hosts when average CPU goes above 70 percent, remove them when it drops
+resource "aws_autoscaling_policy" "docker_hosts_cpu_19thoct" {
+  name                   = "19thoct-docker-hosts-cpu-policy"
+  autoscaling_group_name = aws_autoscaling_group.docker_hosts_asg_19thoct.name
+  policy_type            = "TargetTrackingScaling"
+
+  target_tracking_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ASGAverageCPUUtilization"
+    }
+    target_value = 70
+  }
+}
