@@ -603,3 +603,79 @@ resource "aws_dlm_lifecycle_policy" "nexus_backup_19thoct" {
   }
 }
 
+#creating sonarqube server
+resource "aws_instance" "sonarqube_19thoct" {
+  ami                         = data.aws_ami.redhat_19thoct.id
+  instance_type               = "t3.medium"                              # SonarQube needs at least 4GB RAM, t3.medium has 4GB
+  subnet_id                   = aws_subnet.private_subnet_2_19thoct.id   # private subnet (can't be accessed from the internet)
+  vpc_security_group_ids      = [aws_security_group.sonarqube_sg_19thoct.id] # Use the SonarQube security group (ports 22, 9000)
+  associate_public_ip_address = false
+  key_name                    = aws_key_pair.key_pair_19thoct.key_name # Use the team key pair so we can SSH in through the bastion
+  user_data = file("${path.module}/userdata-sonarqube.sh")
+   depends_on = [
+  aws_nat_gateway.nat_19thoct,
+  aws_route_table_association.public_rta_1_19thoct,
+  aws_route_table_association.private_rta_2_19thoct
+]
+  metadata_options {
+  http_endpoint = "enabled"
+  http_tokens   = "required"
+ 
+}
+  # Disk size - SonarQube stores code analysis data so it needs space
+ 
+   root_block_device {
+    volume_size = 30
+    volume_type = "gp3"
+    encrypted   = true
+
+    tags = {
+      Name    = "19thoct-sonarqube-disk"
+      Project = "19thoct"
+      Backup  = "sonarqube-daily"
+    }
+  }
+
+  tags = {
+    Name    = "19thoct-sonarqube"
+    Project = "19thoct"
+  }
+  }
+  resource "aws_dlm_lifecycle_policy" "sonarqube_backup_19thoct" {
+  description        = "Daily SonarQube disk snapshots; retain seven snapshots"
+  execution_role_arn = aws_iam_role.dlm_role_19thoct.arn
+  state              = "ENABLED"
+
+  depends_on = [
+    aws_iam_role_policy_attachment.dlm_policy_19thoct
+  ]
+
+  policy_details {
+    resource_types = ["VOLUME"]
+
+    target_tags = {
+      Backup = "sonarqube-daily"
+    }
+
+    schedule {
+      name = "Daily SonarQube snapshot"
+
+      create_rule {
+        interval      = 24
+        interval_unit = "HOURS"
+        times         = ["03:00"]
+      }
+
+      retain_rule {
+        count = 7
+      }
+
+      copy_tags = true
+    }
+  }
+
+  tags = {
+    Name    = "19thoct-sonarqube-backup"
+    Project = "19thoct"
+  }
+}
