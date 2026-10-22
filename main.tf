@@ -427,6 +427,22 @@ resource "aws_route_table_association" "private_rta_2_19thoct" {
   route_table_id = aws_route_table.private_rt_19thoct.id
 }
 
+
+#Bastion Server
+resource "aws_instance" "bastion_19thoct" {
+  ami                    = data.aws_ami.redhat_19thoct.id
+  instance_type          = "t3.micro"
+  subnet_id              = aws_subnet.public_subnet_1_19thoct.id
+  vpc_security_group_ids = [aws_security_group.bastion_sg_19thoct.id]
+  key_name               = aws_key_pair.key_pair_19thoct.key_name
+
+  associate_public_ip_address = true
+
+  tags = {
+    Name    = "19thoct-bastion"
+    Project = "19thoct"
+  }
+}
 # ==========================================================
 # CT-12: Nexus Server
 # Nexus stores our build artifacts (Maven) and Docker images.
@@ -470,67 +486,8 @@ resource "aws_instance" "nexus_19thoct" {
     }
   }
 
-  # This script runs ONE TIME when the server first starts.
-  # It installs Nexus and sets it up to start automatically.
-  user_data = <<-EOF
-    #!/bin/bash
-
-    # Update the server and install wget and tar
-    yum update -y
-    yum install -y wget tar
-
-    # Change the server's hostname so we know which server we're on
-    hostnamectl set-hostname nexus-19thoct
-
-    # Stop AWS's startup tool (cloud-init) changing the hostname back on reboot
-    echo "preserve_hostname: true" > /etc/cloud/cloud.cfg.d/99_hostname.cfg
-
-    # Create a user called nexus - Nexus should not run as root
-    useradd --system --create-home --shell /bin/bash nexus
-
-    # Download Nexus into /opt and unzip it
-    # (Nexus now comes with its own Java, so we don't install Java separately)
-    cd /opt
-    wget -O nexus.tar.gz https://download.sonatype.com/nexus/3/nexus-3.87.1-01-linux-x86_64.tar.gz
-    tar -xzf nexus.tar.gz
-    rm nexus.tar.gz
-
-    # Rename the folder to just "nexus" so the path is simple
-    mv nexus-3* nexus
-
-    # Give the nexus user ownership of the Nexus files and data folder
-    chown -R nexus:nexus /opt/nexus /opt/sonatype-work
-
-    # Tell Nexus to run as the nexus user
-    echo 'run_as_user="nexus"' > /opt/nexus/bin/nexus.rc
-
-    # Red Hat has SELinux switched on, which blocks services from running
-    # programs stored in /opt. This marks the Nexus start script as allowed.
-    chcon -R -t bin_t /opt/nexus/bin
-
-    # Create a service so Nexus starts automatically when the server reboots
-    cat > /etc/systemd/system/nexus.service <<'SVC'
-    [Unit]
-    Description=Nexus Repository Manager
-    After=network.target
-
-    [Service]
-    Type=forking
-    LimitNOFILE=65536
-    ExecStart=/opt/nexus/bin/nexus start
-    ExecStop=/opt/nexus/bin/nexus stop
-    User=nexus
-    Restart=on-abort
-
-    [Install]
-    WantedBy=multi-user.target
-    SVC
-
-    # Start Nexus now and enable it on every boot
-    systemctl daemon-reload
-    systemctl enable nexus
-    systemctl start nexus
-  EOF
+  # Install script - runs ONE TIME when the server first starts
+  user_data = file("${path.module}/nexus_userdata.sh")
 
   tags = {
     Name    = "19thoct-nexus"
@@ -606,23 +563,42 @@ resource "aws_dlm_lifecycle_policy" "nexus_backup_19thoct" {
   }
 }
 
-# ---------- Docker hosts (Kenneth) ----------
+# ===============================================
+# Ansible Server (public subnet 2)
+# Runs the playbooks that build and deploy BankApp
+# ===============================================
+resource "aws_instance" "ansible_19thoct" {
+  ami                         = data.aws_ami.redhat_19thoct.id
+  instance_type               = "t3.small"
+  subnet_id                   = aws_subnet.public_subnet_2_19thoct.id
+  vpc_security_group_ids      = [aws_security_group.ansible_sg_19thoct.id]
+  associate_public_ip_address = true
+  key_name                    = aws_key_pair.key_pair_19thoct.key_name
 
-# Latest Ubuntu 22.04 LTS image from Canonical
-data "aws_ami" "ubuntu_19thoct" {
-  most_recent = true
-  owners      = ["099720109477"] # Canonical
-
-  filter {
-    name   = "name"
-    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
+  root_block_device {
+    volume_size = 20
+    volume_type = "gp3"
   }
 
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
+  user_data = <<-EOF
+    #!/bin/bash
+    dnf update -y
+    dnf install -y ansible-core git python3-pip
+    hostnamectl set-hostname ansible-19thoct
+    echo "preserve_hostname: true" > /etc/cloud/cloud.cfg.d/99_hostname.cfg
+    sudo -u ec2-user ansible-galaxy collection install community.docker
+  EOF
+
+  tags = {
+    Name    = "19thoct-ansible"
+    Project = "19thoct"
   }
 }
+
+# ---------- Docker hosts (Kenneth) ----------
+
+# The Docker hosts use the same Red Hat Enterprise Linux 9 image as Nexus
+# (data "aws_ami" "redhat_19thoct" above)
 
 # IAM role so the Docker hosts can be managed through SSM Session Manager
 resource "aws_iam_role" "docker_hosts_role_19thoct" {
@@ -656,7 +632,7 @@ resource "aws_iam_instance_profile" "docker_hosts_profile_19thoct" {
 # Launch template: how every Docker host is built
 resource "aws_launch_template" "docker_hosts_lt_19thoct" {
   name_prefix   = "19thoct-docker-hosts-"
-  image_id      = data.aws_ami.ubuntu_19thoct.id
+  image_id      = data.aws_ami.redhat_19thoct.id
   instance_type = var.docker_instance_type
   key_name      = aws_key_pair.key_pair_19thoct.key_name
 
@@ -674,7 +650,7 @@ resource "aws_launch_template" "docker_hosts_lt_19thoct" {
 
   # Encrypted disk for images, containers and logs
   block_device_mappings {
-    device_name = "/dev/sda1"
+    device_name = data.aws_ami.redhat_19thoct.root_device_name
 
     ebs {
       volume_size           = 20
@@ -684,71 +660,8 @@ resource "aws_launch_template" "docker_hosts_lt_19thoct" {
     }
   }
 
-  user_data = base64encode(<<-EOF
-    #!/bin/bash
-    set -euo pipefail
-
-    # Save all output to a log file so failed boots can be investigated
-    exec > >(tee -a /var/log/docker-host-setup.log) 2>&1
-
-    # Retry a command up to 5 times, 15 seconds apart,
-    # so a short network blip doesn't leave a host without Docker
-    retry() {
-      local attempt=1
-      until "$@"; do
-        if [ "$attempt" -ge 5 ]; then
-          echo "FAILED after $attempt attempts: $*"
-          return 1
-        fi
-        echo "Attempt $attempt failed: $*. Retrying in 15 seconds..."
-        attempt=$((attempt + 1))
-        sleep 15
-      done
-    }
-
-    # Wait up to 5 minutes if Ubuntu's automatic updates are holding the apt lock
-    APT="apt-get -o DPkg::Lock::Timeout=300"
-
-    # Install Docker Engine from Docker's official repository
-    retry $APT update -y
-    retry $APT install -y ca-certificates curl gnupg
-    install -m 0755 -d /etc/apt/keyrings
-    retry curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /tmp/docker.gpg
-    gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg /tmp/docker.gpg
-    chmod a+r /etc/apt/keyrings/docker.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
-    retry $APT update -y
-    retry $APT install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
-
-    # Docker daemon settings:
-    # - rotate container logs so the disk never fills up
-    # - keep containers running if the Docker daemon restarts
-    # The daemon only listens on the local socket, never on a network port
-    mkdir -p /etc/docker
-    cat > /etc/docker/daemon.json <<'JSON'
-    {
-      "log-driver": "json-file",
-      "log-opts": { "max-size": "10m", "max-file": "3" },
-      "live-restore": true
-    }
-    JSON
-
-    # Folder for any persistent application data
-    mkdir -p /opt/bankapp/data
-    chown ubuntu:ubuntu /opt/bankapp/data
-
-    # Only root and the ubuntu user (used by Ansible) can control Docker
-    usermod -aG docker ubuntu
-
-    # Start Docker now and on every boot
-    systemctl enable docker
-    systemctl restart docker
-
-    # Confirm Docker is actually running before marking setup complete
-    systemctl is-active --quiet docker
-    echo "Docker host setup completed successfully"
-  EOF
-  )
+  # Install script lives in its own file so main.tf stays readable
+  user_data = base64encode(file("${path.module}/docker-host-userdata.sh"))
 
   tag_specifications {
     resource_type = "instance"
@@ -765,6 +678,27 @@ resource "aws_launch_template" "docker_hosts_lt_19thoct" {
     Project = "19thoct"
   }
 }
+
+#creating m-node redhat instance
+resource "aws_instance" "redhate_19thoct" {
+  ami                         = data.aws_ami.redhat_19thoct.id
+  instance_type               = "t3.small"
+  subnet_id                   = aws_subnet.public_subnet_2_19thoct.id
+  vpc_security_group_ids      = [aws_security_group.ansible_sg_19thoct.id]
+  associate_public_ip_address = true
+  key_name                    = aws_key_pair.key_pair_19thoct.key_name
+
+  root_block_device {
+    volume_size = 20
+    volume_type = "gp3"
+  }
+
+  tags = {
+    Name    = "19thoct-mnode"
+    Project = "19thoct"
+  }
+}
+
 
 # Auto scaling group: keeps Docker hosts running across both private subnets
 resource "aws_autoscaling_group" "docker_hosts_asg_19thoct" {
@@ -808,6 +742,22 @@ resource "aws_autoscaling_policy" "docker_hosts_cpu_19thoct" {
       predefined_metric_type = "ASGAverageCPUUtilization"
     }
     target_value = 70
+  }
+}
+
+# Latest Ubuntu 22.04 LTS image from Canonical, used by the Jenkins server
+data "aws_ami" "ubuntu_19thoct" {
+  most_recent = true
+  owners      = ["099720109477"] # Canonical
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
   }
 }
 
@@ -935,3 +885,84 @@ resource "aws_instance" "jenkins_19thoct" {
 }
 
 
+
+#creating sonarqube server
+# SonarQube server
+resource "aws_instance" "sonarqube_19thoct" {
+  ami                         = data.aws_ami.redhat_19thoct.id
+  instance_type               = "t3.medium"
+  subnet_id                   = aws_subnet.private_subnet_2_19thoct.id
+  vpc_security_group_ids      = [aws_security_group.sonarqube_sg_19thoct.id]
+  associate_public_ip_address = false
+  key_name                    = aws_key_pair.key_pair_19thoct.key_name
+
+  user_data = file("${path.module}/userdata-sonarqube.sh")
+
+  depends_on = [
+    aws_nat_gateway.nat_19thoct,
+    aws_route_table_association.public_rta_1_19thoct,
+    aws_route_table_association.private_rta_2_19thoct
+  ]
+
+  metadata_options {
+    http_endpoint = "enabled"
+    http_tokens   = "required"
+  }
+
+  root_block_device {
+    volume_size = 30
+    volume_type = "gp3"
+    encrypted   = true
+
+    tags = {
+      Name    = "19thoct-sonarqube-disk"
+      Project = "19thoct"
+      Backup  = "sonarqube-daily"
+    }
+  }
+
+  tags = {
+    Name    = "19thoct-sonarqube"
+    Project = "19thoct"
+  }
+}
+
+# SonarQube disk snapshots
+resource "aws_dlm_lifecycle_policy" "sonarqube_backup_19thoct" {
+  description        = "Daily SonarQube disk snapshots retain seven snapshots"
+  execution_role_arn = aws_iam_role.dlm_role_19thoct.arn
+  state              = "ENABLED"
+
+  depends_on = [
+    aws_iam_role_policy_attachment.dlm_policy_19thoct
+  ]
+
+  policy_details {
+    resource_types = ["VOLUME"]
+
+    target_tags = {
+      Backup = "sonarqube-daily"
+    }
+
+    schedule {
+      name = "Daily SonarQube snapshot"
+
+      create_rule {
+        interval      = 24
+        interval_unit = "HOURS"
+        times         = ["03:00"]
+      }
+
+      retain_rule {
+        count = 7
+      }
+
+      copy_tags = true
+    }
+  }
+
+  tags = {
+    Name    = "19thoct-sonarqube-backup"
+    Project = "19thoct"
+  }
+}
