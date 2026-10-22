@@ -1,0 +1,15 @@
+dockerhub_username: "YOUR_DOCKERHUB_USER"
+image_name: "{{ dockerhub_username }}/19thoct"
+image_tag: "latest"
+nexus_jar_url: "http://NEXUS-PRIVATE-IP:8081/repository/maven-releases/PATH/TO/bankapp.jar"
+app_port: 8080
+rds_endpoint: "YOUR-RDS-ENDPOINT"
+db_name: "bankapp"
+
+# secrets come from the vault file
+nexus_user: "{{ vault_nexus_user }}"
+nexus_password: "{{ vault_nexus_password }}"
+db_user: "{{ vault_db_user }}"
+db_password: "{{ vault_db_password }}"
+dockerhub_token: "{{ vault_dockerhub_token }}"
+

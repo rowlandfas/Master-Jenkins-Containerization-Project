@@ -622,6 +622,38 @@ resource "aws_dlm_lifecycle_policy" "nexus_backup_19thoct" {
   }
 }
 
+# ===============================================
+# Ansible Server (public subnet 2)
+# Runs the playbooks that build and deploy BankApp
+# ===============================================
+resource "aws_instance" "ansible_19thoct" {
+  ami                         = data.aws_ami.redhat_19thoct.id
+  instance_type               = "t3.small"
+  subnet_id                   = aws_subnet.public_subnet_2_19thoct.id
+  vpc_security_group_ids      = [aws_security_group.ansible_sg_19thoct.id]
+  associate_public_ip_address = true
+  key_name                    = aws_key_pair.key_pair_19thoct.key_name
+
+  root_block_device {
+    volume_size = 20
+    volume_type = "gp3"
+  }
+
+  user_data = <<-EOF
+    #!/bin/bash
+    dnf update -y
+    dnf install -y ansible-core git python3-pip
+    hostnamectl set-hostname ansible-19thoct
+    echo "preserve_hostname: true" > /etc/cloud/cloud.cfg.d/99_hostname.cfg
+    sudo -u ec2-user ansible-galaxy collection install community.docker
+  EOF
+
+  tags = {
+    Name    = "19thoct-ansible"
+    Project = "19thoct"
+  }
+}
+
 # ---------- Docker hosts (Kenneth) ----------
 
 # Latest Ubuntu 22.04 LTS image from Canonical
@@ -782,6 +814,27 @@ resource "aws_launch_template" "docker_hosts_lt_19thoct" {
   }
 }
 
+#creating m-node redhat instance
+resource "aws_instance" "redhate_19thoct" {
+  ami                         = data.aws_ami.redhat_19thoct.id
+  instance_type               = "t3.small"
+  subnet_id                   = aws_subnet.public_subnet_2_19thoct.id
+  vpc_security_group_ids      = [aws_security_group.ansible_sg_19thoct.id]
+  associate_public_ip_address = true
+  key_name                    = aws_key_pair.key_pair_19thoct.key_name
+
+  root_block_device {
+    volume_size = 20
+    volume_type = "gp3"
+  }
+
+  tags = {
+    Name    = "19thoct-mnode"
+    Project = "19thoct"
+  }
+}
+
+
 # Auto scaling group: keeps Docker hosts running across both private subnets
 resource "aws_autoscaling_group" "docker_hosts_asg_19thoct" {
   name                = "19thoct-docker-hosts-asg"
@@ -814,7 +867,7 @@ resource "aws_autoscaling_group" "docker_hosts_asg_19thoct" {
 }
 
 # Add hosts when average CPU goes above 70 percent, remove them when it drops
-resource "aws_autoscaling_policy" "docker_hosts_cpu_19thoct" {
+ resource "aws_autoscaling_policy" "docker_hosts_cpu_19thoct" {
   name                   = "19thoct-docker-hosts-cpu-policy"
   autoscaling_group_name = aws_autoscaling_group.docker_hosts_asg_19thoct.name
   policy_type            = "TargetTrackingScaling"
