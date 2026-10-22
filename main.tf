@@ -566,7 +566,7 @@ resource "aws_dlm_lifecycle_policy" "nexus_backup_19thoct" {
 # ---------- Docker hosts (Kenneth) ----------
 
 # The Docker hosts use the same Red Hat Enterprise Linux 9 image as Nexus
-# (data "aws_ami" "redhat_19thoct" above), so every server runs one OS
+# (data "aws_ami" "redhat_19thoct" above)
 
 # IAM role so the Docker hosts can be managed through SSM Session Manager
 resource "aws_iam_role" "docker_hosts_role_19thoct" {
@@ -628,72 +628,8 @@ resource "aws_launch_template" "docker_hosts_lt_19thoct" {
     }
   }
 
-  user_data = base64encode(<<-EOF
-    #!/bin/bash
-    set -euo pipefail
-
-    # Save all output to a log file so failed boots can be investigated
-    exec > >(tee -a /var/log/docker-host-setup.log) 2>&1
-
-    # Retry a command up to 5 times, 15 seconds apart,
-    # so a short network blip doesn't leave a host without Docker
-    retry() {
-      local attempt=1
-      until "$@"; do
-        if [ "$attempt" -ge 5 ]; then
-          echo "FAILED after $attempt attempts: $*"
-          return 1
-        fi
-        echo "Attempt $attempt failed: $*. Retrying in 15 seconds..."
-        attempt=$((attempt + 1))
-        sleep 15
-      done
-    }
-
-    # Install the SSM agent (Red Hat images don't include it) so the team
-    # can open a session through Session Manager without SSH
-    retry dnf install -y https://s3.eu-west-3.amazonaws.com/amazon-ssm-eu-west-3/latest/linux_amd64/amazon-ssm-agent.rpm
-    systemctl enable --now amazon-ssm-agent
-
-    # Remove Red Hat's own container tools so they don't clash with Docker
-    dnf remove -y podman buildah runc || true
-
-    # Install Docker Engine from Docker's official Red Hat repository
-    retry dnf install -y dnf-plugins-core
-    retry dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo
-    retry dnf install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
-
-    # Docker daemon settings:
-    # - rotate container logs so the disk never fills up
-    # - keep containers running if the Docker daemon restarts
-    # The daemon only listens on the local socket, never on a network port
-    mkdir -p /etc/docker
-    cat > /etc/docker/daemon.json <<'JSON'
-    {
-      "log-driver": "json-file",
-      "log-opts": { "max-size": "10m", "max-file": "3" },
-      "live-restore": true
-    }
-    JSON
-
-    # Folder for any persistent application data.
-    # SELinux stays enforcing; mount this folder into containers with :Z
-    # (for example -v /opt/bankapp/data:/data:Z) so SELinux allows access
-    mkdir -p /opt/bankapp/data
-    chown ec2-user:ec2-user /opt/bankapp/data
-
-    # Only root and ec2-user (used by Ansible) can control Docker
-    usermod -aG docker ec2-user
-
-    # Start Docker now and on every boot
-    systemctl enable docker
-    systemctl restart docker
-
-    # Confirm Docker is actually running before marking setup complete
-    systemctl is-active --quiet docker
-    echo "Docker host setup completed successfully"
-  EOF
-  )
+  # Install script lives in its own file so main.tf stays readable
+  user_data = base64encode(file("${path.module}/docker-host-userdata.sh"))
 
   tag_specifications {
     resource_type = "instance"
@@ -756,13 +692,29 @@ resource "aws_autoscaling_policy" "docker_hosts_cpu_19thoct" {
   }
 }
 
+# Latest Ubuntu 22.04 LTS image from Canonical, used by the Jenkins server
+data "aws_ami" "ubuntu_19thoct" {
+  most_recent = true
+  owners      = ["099720109477"] # Canonical
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
 # ==================================================
 # JENKINS SERVER
 # Private server for the BankApp CI/CD pipeline.
 # ==================================================
 
 resource "aws_instance" "jenkins_19thoct" {
-  ami           = data.aws_ami.ubuntu_19thoct.id
+  ami           = data.aws_ami.redhat_19thoct.id
   instance_type = "t3.medium"
 
   subnet_id = aws_subnet.private_subnet_1_19thoct.id
@@ -797,14 +749,12 @@ resource "aws_instance" "jenkins_19thoct" {
   # Recreate the instance when its installation script changes.
   user_data_replace_on_change = true
 
-  user_data = <<-EOF
+    user_data = <<-EOF
     #!/bin/bash
     set -euo pipefail
 
     # Record installation output for troubleshooting.
     exec > >(tee -a /var/log/jenkins-setup.log) 2>&1
-
-    export DEBIAN_FRONTEND=noninteractive
 
     # Retry commands if the network is temporarily unavailable.
     retry() {
@@ -827,38 +777,35 @@ resource "aws_instance" "jenkins_19thoct" {
     echo "preserve_hostname: true" \
       > /etc/cloud/cloud.cfg.d/99_hostname.cfg
 
-    # Wait for Ubuntu's automatic updates to release the package lock.
-    retry apt-get -o DPkg::Lock::Timeout=300 update
+    # Refresh Red Hat package information.
+    retry dnf -y makecache
 
-    # Install Java before installing Jenkins.
-    # The JDK also provides the compiler needed for Java builds.
-    retry apt-get -o DPkg::Lock::Timeout=300 install -y \
+    # Install Java before Jenkins, plus the build tools.
+    retry dnf -y install \
       ca-certificates \
-      curl \
+      wget \
       fontconfig \
-      openjdk-21-jdk \
+      java-21-openjdk-devel \
       git \
       maven \
       unzip
 
-    # Add the official Jenkins LTS repository signing key.
-    install -d -m 0755 /etc/apt/keyrings
+    # Add the official Jenkins LTS RPM repository.
+    retry wget -O /etc/yum.repos.d/jenkins.repo \
+      https://pkg.jenkins.io/rpm-stable/jenkins.repo
 
-    retry curl -fsSL \
-      https://pkg.jenkins.io/debian-stable/jenkins.io-2026.key \
-      -o /etc/apt/keyrings/jenkins-keyring.asc
+    # Download and import the Jenkins repository signing key.
+    retry wget -O /tmp/jenkins-signing-key.asc \
+      https://pkg.jenkins.io/rpm-stable/jenkins.io-2026.key
 
-    chmod 0644 /etc/apt/keyrings/jenkins-keyring.asc
-
-    # Add the official Jenkins LTS package repository.
-    echo "deb [signed-by=/etc/apt/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" \
-      > /etc/apt/sources.list.d/jenkins.list
+    rpm --import /tmp/jenkins-signing-key.asc
+    rm -f /tmp/jenkins-signing-key.asc
 
     # Install Jenkins.
-    retry apt-get -o DPkg::Lock::Timeout=300 update
-    retry apt-get -o DPkg::Lock::Timeout=300 install -y jenkins
+    retry dnf -y install jenkins
 
-    # Start Jenkins now and automatically after reboot.
+    # Reload service definitions and start Jenkins.
+    systemctl daemon-reload
     systemctl enable --now jenkins
 
     # Check the service and installed tools.
