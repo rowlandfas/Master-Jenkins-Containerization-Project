@@ -971,3 +971,140 @@ resource "aws_dlm_lifecycle_policy" "sonarqube_backup_19thoct" {
     Project = "19thoct"
   }
 }
+
+# ==========================================================
+# CT-12: Nexus load balancer record (nexus.everythingops.io)
+# ==========================================================
+
+# Look up the everythingops.io hosted zone.
+
+data "aws_route53_zone" "everythingops_19thoct" {
+  name         = "everythingops.io"
+  private_zone = false
+}
+
+# HTTPS certificate for nexus.everythingops.io (free from AWS)
+resource "aws_acm_certificate" "nexus_cert_19thoct" {
+  domain_name       = "nexus.everythingops.io"
+  validation_method = "DNS"
+
+  # If the certificate ever needs replacing, make the new one before deleting the old
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  tags = {
+    Name    = "19thoct-nexus-cert"
+    Project = "19thoct"
+  }
+}
+
+# AWS asks us to prove we own the domain by adding a special DNS record.
+# This creates that record in the everythingops.io hosted zone.
+resource "aws_route53_record" "nexus_cert_validation_19thoct" {
+  zone_id         = data.aws_route53_zone.everythingops_19thoct.zone_id
+  name            = tolist(aws_acm_certificate.nexus_cert_19thoct.domain_validation_options)[0].resource_record_name
+  type            = tolist(aws_acm_certificate.nexus_cert_19thoct.domain_validation_options)[0].resource_record_type
+  records         = [tolist(aws_acm_certificate.nexus_cert_19thoct.domain_validation_options)[0].resource_record_value]
+  ttl             = 60
+  allow_overwrite = true
+}
+
+# Wait until AWS has checked the record and issued the certificate
+resource "aws_acm_certificate_validation" "nexus_cert_19thoct" {
+  certificate_arn         = aws_acm_certificate.nexus_cert_19thoct.arn
+  validation_record_fqdns = [aws_route53_record.nexus_cert_validation_19thoct.fqdn]
+}
+
+# Target group - tells the load balancer where Nexus is
+resource "aws_lb_target_group" "nexus_tg_19thoct" {
+  name     = "19thoct-nexus-tg"
+  port     = 8081
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.vpc_19thoct.id
+
+  # The load balancer checks this page every 30 seconds to see if Nexus is up
+  health_check {
+    path                = "/service/rest/v1/status"
+    port                = "8081"
+    protocol            = "HTTP"
+    matcher             = "200"
+    interval            = 30
+    timeout             = 5
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+  }
+
+  tags = {
+    Name    = "19thoct-nexus-tg"
+    Project = "19thoct"
+  }
+}
+
+# Put the Nexus server into the target group
+resource "aws_lb_target_group_attachment" "nexus_tg_attach_19thoct" {
+  target_group_arn = aws_lb_target_group.nexus_tg_19thoct.arn
+  target_id        = aws_instance.nexus_19thoct.id
+  port             = 8081
+}
+
+# The load balancer for Nexus - this is what the internet connects to
+resource "aws_lb" "nexus_alb_19thoct" {
+  name               = "19thoct-nexus-alb"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.alb_19thoct.id]
+  subnets = [
+    aws_subnet.public_subnet_1_19thoct.id,
+    aws_subnet.public_subnet_2_19thoct.id
+  ]
+
+  tags = {
+    Name    = "19thoct-nexus-alb"
+    Project = "19thoct"
+  }
+}
+
+# HTTPS listener (port 443) - receives secure traffic and sends it to Nexus
+resource "aws_lb_listener" "nexus_https_19thoct" {
+  load_balancer_arn = aws_lb.nexus_alb_19thoct.arn
+  port              = 443
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+  certificate_arn   = aws_acm_certificate_validation.nexus_cert_19thoct.certificate_arn
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.nexus_tg_19thoct.arn
+  }
+}
+
+# HTTP listener (port 80) - sends anyone using http:// over to https://
+resource "aws_lb_listener" "nexus_http_19thoct" {
+  load_balancer_arn = aws_lb.nexus_alb_19thoct.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type = "redirect"
+
+    redirect {
+      port        = "443"
+      protocol    = "HTTPS"
+      status_code = "HTTP_301"
+    }
+  }
+}
+
+# DNS record - makes nexus.everythingops.io point at the Nexus load balancer
+resource "aws_route53_record" "nexus_dns_19thoct" {
+  zone_id = data.aws_route53_zone.everythingops_19thoct.zone_id
+  name    = "nexus.everythingops.io"
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.nexus_alb_19thoct.dns_name
+    zone_id                = aws_lb.nexus_alb_19thoct.zone_id
+    evaluate_target_health = true
+  }
+}
