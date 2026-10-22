@@ -34,3 +34,18 @@ output "docker_hosts_sg_id" {
   description = "Security group ID of the Docker hosts"
   value       = aws_security_group.docker_hosts_sg_19thoct.id
 }
+
+output "jenkins_instance_id" {
+  description = "ID of the 19thoct Jenkins server"
+  value       = aws_instance.jenkins_19thoct.id
+}
+
+output "jenkins_private_ip" {
+  description = "Private IP address of the Jenkins server"
+  value       = aws_instance.jenkins_19thoct.private_ip
+}
+
+output "jenkins_private_url" {
+  description = "Internal Jenkins URL, accessible through private connectivity"
+  value       = "http://${aws_instance.jenkins_19thoct.private_ip}:8080"
+}
