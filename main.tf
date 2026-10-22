@@ -608,21 +608,8 @@ resource "aws_dlm_lifecycle_policy" "nexus_backup_19thoct" {
 
 # ---------- Docker hosts (Kenneth) ----------
 
-# Latest Ubuntu 22.04 LTS image from Canonical
-data "aws_ami" "ubuntu_19thoct" {
-  most_recent = true
-  owners      = ["099720109477"] # Canonical
-
-  filter {
-    name   = "name"
-    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
-  }
-
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
-}
+# The Docker hosts use the same Red Hat Enterprise Linux 9 image as Nexus
+# (data "aws_ami" "redhat_19thoct" above), so every server runs one OS
 
 # IAM role so the Docker hosts can be managed through SSM Session Manager
 resource "aws_iam_role" "docker_hosts_role_19thoct" {
@@ -656,7 +643,7 @@ resource "aws_iam_instance_profile" "docker_hosts_profile_19thoct" {
 # Launch template: how every Docker host is built
 resource "aws_launch_template" "docker_hosts_lt_19thoct" {
   name_prefix   = "19thoct-docker-hosts-"
-  image_id      = data.aws_ami.ubuntu_19thoct.id
+  image_id      = data.aws_ami.redhat_19thoct.id
   instance_type = var.docker_instance_type
   key_name      = aws_key_pair.key_pair_19thoct.key_name
 
@@ -674,7 +661,7 @@ resource "aws_launch_template" "docker_hosts_lt_19thoct" {
 
   # Encrypted disk for images, containers and logs
   block_device_mappings {
-    device_name = "/dev/sda1"
+    device_name = data.aws_ami.redhat_19thoct.root_device_name
 
     ebs {
       volume_size           = 20
@@ -706,19 +693,18 @@ resource "aws_launch_template" "docker_hosts_lt_19thoct" {
       done
     }
 
-    # Wait up to 5 minutes if Ubuntu's automatic updates are holding the apt lock
-    APT="apt-get -o DPkg::Lock::Timeout=300"
+    # Install the SSM agent (Red Hat images don't include it) so the team
+    # can open a session through Session Manager without SSH
+    retry dnf install -y https://s3.eu-west-3.amazonaws.com/amazon-ssm-eu-west-3/latest/linux_amd64/amazon-ssm-agent.rpm
+    systemctl enable --now amazon-ssm-agent
 
-    # Install Docker Engine from Docker's official repository
-    retry $APT update -y
-    retry $APT install -y ca-certificates curl gnupg
-    install -m 0755 -d /etc/apt/keyrings
-    retry curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /tmp/docker.gpg
-    gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg /tmp/docker.gpg
-    chmod a+r /etc/apt/keyrings/docker.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
-    retry $APT update -y
-    retry $APT install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+    # Remove Red Hat's own container tools so they don't clash with Docker
+    dnf remove -y podman buildah runc || true
+
+    # Install Docker Engine from Docker's official Red Hat repository
+    retry dnf install -y dnf-plugins-core
+    retry dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo
+    retry dnf install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
     # Docker daemon settings:
     # - rotate container logs so the disk never fills up
@@ -733,12 +719,14 @@ resource "aws_launch_template" "docker_hosts_lt_19thoct" {
     }
     JSON
 
-    # Folder for any persistent application data
+    # Folder for any persistent application data.
+    # SELinux stays enforcing; mount this folder into containers with :Z
+    # (for example -v /opt/bankapp/data:/data:Z) so SELinux allows access
     mkdir -p /opt/bankapp/data
-    chown ubuntu:ubuntu /opt/bankapp/data
+    chown ec2-user:ec2-user /opt/bankapp/data
 
-    # Only root and the ubuntu user (used by Ansible) can control Docker
-    usermod -aG docker ubuntu
+    # Only root and ec2-user (used by Ansible) can control Docker
+    usermod -aG docker ec2-user
 
     # Start Docker now and on every boot
     systemctl enable docker
