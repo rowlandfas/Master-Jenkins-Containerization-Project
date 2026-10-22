@@ -427,6 +427,22 @@ resource "aws_route_table_association" "private_rta_2_19thoct" {
   route_table_id = aws_route_table.private_rt_19thoct.id
 }
 
+
+#Bastion Server
+resource "aws_instance" "bastion_19thoct" {
+  ami                    = "ami-0884bba1ac5619645"
+  instance_type          = "t3.micro"
+  subnet_id              = aws_subnet.public_subnet_1_19thoct.id
+  vpc_security_group_ids = [aws_security_group.bastion_sg_19thoct.id]
+  key_name               = aws_key_pair.key_pair_19thoct.key_name
+
+  associate_public_ip_address = true
+
+  tags = {
+    Name    = "19thoct-bastion"
+    Project = "19thoct"
+  }
+}
 # ==========================================================
 # CT-12: Nexus Server
 # Nexus stores our build artifacts (Maven) and Docker images.
@@ -810,6 +826,136 @@ resource "aws_autoscaling_policy" "docker_hosts_cpu_19thoct" {
     target_value = 70
   }
 }
+
+# ==================================================
+# JENKINS SERVER
+# Private server for the BankApp CI/CD pipeline.
+# ==================================================
+
+resource "aws_instance" "jenkins_19thoct" {
+  ami           = data.aws_ami.ubuntu_19thoct.id
+  instance_type = "t3.medium"
+
+  subnet_id = aws_subnet.private_subnet_1_19thoct.id
+
+  vpc_security_group_ids = [
+    aws_security_group.jenkins_sg_19thoct.id
+  ]
+
+  key_name                    = aws_key_pair.key_pair_19thoct.key_name
+  associate_public_ip_address = false
+
+  # Require the more secure instance metadata service.
+  metadata_options {
+    http_endpoint = "enabled"
+    http_tokens   = "required"
+  }
+
+  # Encrypted storage for Jenkins configuration,
+  # plugins, workspaces and build files.
+  root_block_device {
+    volume_size           = 30
+    volume_type           = "gp3"
+    encrypted             = true
+    delete_on_termination = true
+
+    tags = {
+      Name    = "19thoct-jenkins-disk"
+      Project = "19thoct"
+    }
+  }
+
+  # Recreate the instance when its installation script changes.
+  user_data_replace_on_change = true
+
+  user_data = <<-EOF
+    #!/bin/bash
+    set -euo pipefail
+
+    # Record installation output for troubleshooting.
+    exec > >(tee -a /var/log/jenkins-setup.log) 2>&1
+
+    export DEBIAN_FRONTEND=noninteractive
+
+    # Retry commands if the network is temporarily unavailable.
+    retry() {
+      local attempt=1
+
+      until "$@"; do
+        if [ "$attempt" -ge 5 ]; then
+          echo "Command failed after $attempt attempts: $*"
+          return 1
+        fi
+
+        echo "Retrying in 15 seconds..."
+        attempt=$((attempt + 1))
+        sleep 15
+      done
+    }
+
+    # Set the server hostname.
+    hostnamectl set-hostname jenkins-19thoct
+    echo "preserve_hostname: true" \
+      > /etc/cloud/cloud.cfg.d/99_hostname.cfg
+
+    # Wait for Ubuntu's automatic updates to release the package lock.
+    retry apt-get -o DPkg::Lock::Timeout=300 update
+
+    # Install Java before installing Jenkins.
+    # The JDK also provides the compiler needed for Java builds.
+    retry apt-get -o DPkg::Lock::Timeout=300 install -y \
+      ca-certificates \
+      curl \
+      fontconfig \
+      openjdk-21-jdk \
+      git \
+      maven \
+      unzip
+
+    # Add the official Jenkins LTS repository signing key.
+    install -d -m 0755 /etc/apt/keyrings
+
+    retry curl -fsSL \
+      https://pkg.jenkins.io/debian-stable/jenkins.io-2026.key \
+      -o /etc/apt/keyrings/jenkins-keyring.asc
+
+    chmod 0644 /etc/apt/keyrings/jenkins-keyring.asc
+
+    # Add the official Jenkins LTS package repository.
+    echo "deb [signed-by=/etc/apt/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" \
+      > /etc/apt/sources.list.d/jenkins.list
+
+    # Install Jenkins.
+    retry apt-get -o DPkg::Lock::Timeout=300 update
+    retry apt-get -o DPkg::Lock::Timeout=300 install -y jenkins
+
+    # Start Jenkins now and automatically after reboot.
+    systemctl enable --now jenkins
+
+    # Check the service and installed tools.
+    systemctl is-active --quiet jenkins
+    java -version
+    git --version
+    mvn -version
+
+    echo "Jenkins server setup completed successfully."
+  EOF
+
+  # Wait until the outbound network path is configured
+  # before starting the installation script.
+  depends_on = [
+    aws_route_table_association.public_rta_1_19thoct,
+    aws_route_table_association.private_rta_1_19thoct
+  ]
+
+  tags = {
+    Name    = "19thoct-jenkins"
+    Project = "19thoct"
+    Role    = "jenkins"
+  }
+}
+
+
 
 #creating sonarqube server
 # SonarQube server
