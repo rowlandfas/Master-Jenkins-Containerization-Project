@@ -817,7 +817,7 @@ resource "aws_autoscaling_policy" "docker_hosts_cpu_19thoct" {
 # ==================================================
 
 resource "aws_instance" "jenkins_19thoct" {
-  ami           = data.aws_ami.ubuntu_19thoct.id
+  ami           = data.aws_ami.redhat_19thoct.id
   instance_type = "t3.medium"
 
   subnet_id = aws_subnet.private_subnet_1_19thoct.id
@@ -852,14 +852,12 @@ resource "aws_instance" "jenkins_19thoct" {
   # Recreate the instance when its installation script changes.
   user_data_replace_on_change = true
 
-  user_data = <<-EOF
+    user_data = <<-EOF
     #!/bin/bash
     set -euo pipefail
 
     # Record installation output for troubleshooting.
     exec > >(tee -a /var/log/jenkins-setup.log) 2>&1
-
-    export DEBIAN_FRONTEND=noninteractive
 
     # Retry commands if the network is temporarily unavailable.
     retry() {
@@ -882,38 +880,35 @@ resource "aws_instance" "jenkins_19thoct" {
     echo "preserve_hostname: true" \
       > /etc/cloud/cloud.cfg.d/99_hostname.cfg
 
-    # Wait for Ubuntu's automatic updates to release the package lock.
-    retry apt-get -o DPkg::Lock::Timeout=300 update
+    # Refresh Red Hat package information.
+    retry dnf -y makecache
 
-    # Install Java before installing Jenkins.
-    # The JDK also provides the compiler needed for Java builds.
-    retry apt-get -o DPkg::Lock::Timeout=300 install -y \
+    # Install Java before Jenkins, plus the build tools.
+    retry dnf -y install \
       ca-certificates \
-      curl \
+      wget \
       fontconfig \
-      openjdk-21-jdk \
+      java-21-openjdk-devel \
       git \
       maven \
       unzip
 
-    # Add the official Jenkins LTS repository signing key.
-    install -d -m 0755 /etc/apt/keyrings
+    # Add the official Jenkins LTS RPM repository.
+    retry wget -O /etc/yum.repos.d/jenkins.repo \
+      https://pkg.jenkins.io/rpm-stable/jenkins.repo
 
-    retry curl -fsSL \
-      https://pkg.jenkins.io/debian-stable/jenkins.io-2026.key \
-      -o /etc/apt/keyrings/jenkins-keyring.asc
+    # Download and import the Jenkins repository signing key.
+    retry wget -O /tmp/jenkins-signing-key.asc \
+      https://pkg.jenkins.io/rpm-stable/jenkins.io-2026.key
 
-    chmod 0644 /etc/apt/keyrings/jenkins-keyring.asc
-
-    # Add the official Jenkins LTS package repository.
-    echo "deb [signed-by=/etc/apt/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" \
-      > /etc/apt/sources.list.d/jenkins.list
+    rpm --import /tmp/jenkins-signing-key.asc
+    rm -f /tmp/jenkins-signing-key.asc
 
     # Install Jenkins.
-    retry apt-get -o DPkg::Lock::Timeout=300 update
-    retry apt-get -o DPkg::Lock::Timeout=300 install -y jenkins
+    retry dnf -y install jenkins
 
-    # Start Jenkins now and automatically after reboot.
+    # Reload service definitions and start Jenkins.
+    systemctl daemon-reload
     systemctl enable --now jenkins
 
     # Check the service and installed tools.
