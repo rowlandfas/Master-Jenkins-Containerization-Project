@@ -18,3 +18,8 @@ output "private_subnet_ids" {
   description = "IDs of the 19thoct private subnets"
   value       = [aws_subnet.private_subnet_1_19thoct.id, aws_subnet.private_subnet_2_19thoct.id]
 }
+
+# Private IP of the Nexus server - we use this to reach it through the bastion
+output "nexus_private_ip" {
+  value = aws_instance.nexus_19thoct.private_ip
+}

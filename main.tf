@@ -223,12 +223,12 @@ resource "aws_security_group" "nexus_sg_19thoct" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-ingress {
+  ingress {
     from_port   = 8085
     to_port     = 8085
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
-  } 
+  }
 
   egress {
     from_port   = 0
@@ -261,7 +261,7 @@ resource "aws_security_group" "docker_hosts_sg_19thoct" {
     to_port     = 22
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
-  } 
+  }
 
   egress {
     from_port   = 0
@@ -309,9 +309,9 @@ resource "aws_security_group" "rds_sg_19thoct" {
   vpc_id      = aws_vpc.vpc_19thoct.id
 
   ingress {
-    from_port   = 3306
-    to_port     = 3306
-    protocol    = "tcp"
+    from_port       = 3306
+    to_port         = 3306
+    protocol        = "tcp"
     security_groups = [aws_security_group.docker_hosts_sg_19thoct.id, aws_security_group.bastion_sg_19thoct.id]
   }
 
@@ -422,5 +422,184 @@ resource "aws_route_table_association" "private_rta_1_19thoct" {
 resource "aws_route_table_association" "private_rta_2_19thoct" {
   subnet_id      = aws_subnet.private_subnet_2_19thoct.id
   route_table_id = aws_route_table.private_rt_19thoct.id
+}
+
+# ==========================================================
+# CT-12: Nexus Server
+# Nexus stores our build artifacts (Maven) and Docker images.
+# It lives in a PRIVATE subnet, so we reach it through the bastion host.
+# ==========================================================
+
+# Find the latest Red Hat Enterprise Linux 9 image (AMI) in our region.
+data "aws_ami" "redhat_19thoct" {
+  most_recent = true
+  owners      = ["309956199498"] # Red Hat's official AWS account
+
+  filter {
+    name   = "name"
+    values = ["RHEL-9.*_HVM-*-x86_64-*-Hourly2-GP3"]
+  }
+
+  filter {
+    name   = "architecture"
+    values = ["x86_64"]
+  }
+}
+
+resource "aws_instance" "nexus_19thoct" {
+  ami                         = data.aws_ami.redhat_19thoct.id
+  instance_type               = "t3.medium"                              # Nexus needs at least 4GB RAM, t3.medium has 4GB
+  subnet_id                   = aws_subnet.private_subnet_1_19thoct.id   # private subnet (can't be accessed from the internet)
+  vpc_security_group_ids      = [aws_security_group.nexus_sg_19thoct.id] # Use the Nexus security group (ports 22, 8081, 8085)
+  associate_public_ip_address = false
+  key_name                    = aws_key_pair.key_pair_19thoct.key_name # Use the team key pair so we can SSH in through the bastion
+
+  # Disk size - Nexus stores artifacts and Docker images so it needs space
+  root_block_device {
+    volume_size = 30
+    volume_type = "gp3"
+
+    # This tag tells the backup policy (below) to snapshot this disk
+    tags = {
+      Name    = "19thoct-nexus-disk"
+      Project = "19thoct"
+      Backup  = "nexus-daily"
+    }
+  }
+
+  # This script runs ONE TIME when the server first starts.
+  # It installs Nexus and sets it up to start automatically.
+  user_data = <<-EOF
+    #!/bin/bash
+
+    # Update the server and install wget and tar
+    yum update -y
+    yum install -y wget tar
+
+    # Change the server's hostname so we know which server we're on
+    hostnamectl set-hostname nexus-19thoct
+
+    # Stop AWS's startup tool (cloud-init) changing the hostname back on reboot
+    echo "preserve_hostname: true" > /etc/cloud/cloud.cfg.d/99_hostname.cfg
+
+    # Create a user called nexus - Nexus should not run as root
+    useradd --system --create-home --shell /bin/bash nexus
+
+    # Download Nexus into /opt and unzip it
+    # (Nexus now comes with its own Java, so we don't install Java separately)
+    cd /opt
+    wget -O nexus.tar.gz https://download.sonatype.com/nexus/3/nexus-3.87.1-01-linux-x86_64.tar.gz
+    tar -xzf nexus.tar.gz
+    rm nexus.tar.gz
+
+    # Rename the folder to just "nexus" so the path is simple
+    mv nexus-3* nexus
+
+    # Give the nexus user ownership of the Nexus files and data folder
+    chown -R nexus:nexus /opt/nexus /opt/sonatype-work
+
+    # Tell Nexus to run as the nexus user
+    echo 'run_as_user="nexus"' > /opt/nexus/bin/nexus.rc
+
+    # Red Hat has SELinux switched on, which blocks services from running
+    # programs stored in /opt. This marks the Nexus start script as allowed.
+    chcon -R -t bin_t /opt/nexus/bin
+
+    # Create a service so Nexus starts automatically when the server reboots
+    cat > /etc/systemd/system/nexus.service <<'SVC'
+    [Unit]
+    Description=Nexus Repository Manager
+    After=network.target
+
+    [Service]
+    Type=forking
+    LimitNOFILE=65536
+    ExecStart=/opt/nexus/bin/nexus start
+    ExecStop=/opt/nexus/bin/nexus stop
+    User=nexus
+    Restart=on-abort
+
+    [Install]
+    WantedBy=multi-user.target
+    SVC
+
+    # Start Nexus now and enable it on every boot
+    systemctl daemon-reload
+    systemctl enable nexus
+    systemctl start nexus
+  EOF
+
+  tags = {
+    Name    = "19thoct-nexus"
+    Project = "19thoct"
+  }
+}
+
+# ---------- Nexus backups (CT-12) ----------
+
+# A role that lets the AWS backup service (DLM) take snapshots for us
+resource "aws_iam_role" "dlm_role_19thoct" {
+  name = "19thoct-dlm-role"
+
+  # Allow the DLM service to use this role
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "dlm.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+
+  tags = {
+    Name    = "19thoct-dlm-role"
+    Project = "19thoct"
+  }
+}
+
+# Give the role AWS's ready-made permissions for creating and deleting snapshots
+resource "aws_iam_role_policy_attachment" "dlm_policy_19thoct" {
+  role       = aws_iam_role.dlm_role_19thoct.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSDataLifecycleManagerServiceRole"
+}
+
+# The backup schedule: snapshot the Nexus disk every day, keep the last 7
+resource "aws_dlm_lifecycle_policy" "nexus_backup_19thoct" {
+  description        = "Daily snapshot of the Nexus disk keep 7 days"
+  execution_role_arn = aws_iam_role.dlm_role_19thoct.arn
+  state              = "ENABLED"
+
+  policy_details {
+    resource_types = ["VOLUME"]
+
+    # Only back up disks with this tag (our Nexus disk)
+    target_tags = {
+      Backup = "nexus-daily"
+    }
+
+    schedule {
+      name = "Daily Nexus snapshot"
+
+      # Take a snapshot every 24 hours at 02:00 (UTC)
+      create_rule {
+        interval      = 24
+        interval_unit = "HOURS"
+        times         = ["02:00"]
+      }
+
+      # Keep the 7 newest snapshots, delete anything older
+      retain_rule {
+        count = 7
+      }
+
+      # Copy the disk's tags onto each snapshot so we can find them easily
+      copy_tags = true
+    }
+  }
+
+  tags = {
+    Name    = "19thoct-nexus-backup"
+    Project = "19thoct"
+  }
 }
 
