@@ -244,23 +244,26 @@ resource "aws_security_group" "nexus_sg_19thoct" {
 }
 
 #creating security group for docker hosts
+# Ticket: Create Docker Host - ports open only to approved sources
 resource "aws_security_group" "docker_hosts_sg_19thoct" {
   name        = "19thoct-docker-hosts-sg"
   description = "Security group for 19thoct Docker Hosts project"
   vpc_id      = aws_vpc.vpc_19thoct.id
 
   ingress {
-    from_port   = 8080
-    to_port     = 8080
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    description     = "BankApp traffic from the load balancer only"
+    from_port       = 8080
+    to_port         = 8080
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb_19thoct.id]
   }
 
   ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    description     = "SSH from bastion and Ansible only"
+    from_port       = 22
+    to_port         = 22
+    protocol        = "tcp"
+    security_groups = [aws_security_group.bastion_sg_19thoct.id, aws_security_group.ansible_sg_19thoct.id]
   }
 
   egress {
@@ -603,79 +606,207 @@ resource "aws_dlm_lifecycle_policy" "nexus_backup_19thoct" {
   }
 }
 
-#creating sonarqube server
-resource "aws_instance" "sonarqube_19thoct" {
-  ami                         = data.aws_ami.redhat_19thoct.id
-  instance_type               = "t3.medium"                              # SonarQube needs at least 4GB RAM, t3.medium has 4GB
-  subnet_id                   = aws_subnet.private_subnet_2_19thoct.id   # private subnet (can't be accessed from the internet)
-  vpc_security_group_ids      = [aws_security_group.sonarqube_sg_19thoct.id] # Use the SonarQube security group (ports 22, 9000)
-  associate_public_ip_address = false
-  key_name                    = aws_key_pair.key_pair_19thoct.key_name # Use the team key pair so we can SSH in through the bastion
-  user_data = file("${path.module}/userdata-sonarqube.sh")
-   depends_on = [
-  aws_nat_gateway.nat_19thoct,
-  aws_route_table_association.public_rta_1_19thoct,
-  aws_route_table_association.private_rta_2_19thoct
-]
-  metadata_options {
-  http_endpoint = "enabled"
-  http_tokens   = "required"
- 
+# ---------- Docker hosts (Kenneth) ----------
+
+# Latest Ubuntu 22.04 LTS image from Canonical
+data "aws_ami" "ubuntu_19thoct" {
+  most_recent = true
+  owners      = ["099720109477"] # Canonical
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
 }
-  # Disk size - SonarQube stores code analysis data so it needs space
- 
-   root_block_device {
-    volume_size = 30
-    volume_type = "gp3"
-    encrypted   = true
+
+# IAM role so the Docker hosts can be managed through SSM Session Manager
+resource "aws_iam_role" "docker_hosts_role_19thoct" {
+  name = "19thoct-docker-hosts-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "ec2.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+
+  tags = {
+    Name    = "19thoct-docker-hosts-role"
+    Project = "19thoct"
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "docker_hosts_ssm_19thoct" {
+  role       = aws_iam_role.docker_hosts_role_19thoct.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_instance_profile" "docker_hosts_profile_19thoct" {
+  name = "19thoct-docker-hosts-profile"
+  role = aws_iam_role.docker_hosts_role_19thoct.name
+}
+
+# Launch template: how every Docker host is built
+resource "aws_launch_template" "docker_hosts_lt_19thoct" {
+  name_prefix   = "19thoct-docker-hosts-"
+  image_id      = data.aws_ami.ubuntu_19thoct.id
+  instance_type = var.docker_instance_type
+  key_name      = aws_key_pair.key_pair_19thoct.key_name
+
+  vpc_security_group_ids = [aws_security_group.docker_hosts_sg_19thoct.id]
+
+  iam_instance_profile {
+    name = aws_iam_instance_profile.docker_hosts_profile_19thoct.name
+  }
+
+  # Require IMDSv2 so instance credentials can't be stolen through the old metadata endpoint
+  metadata_options {
+    http_tokens   = "required"
+    http_endpoint = "enabled"
+  }
+
+  # Encrypted disk for images, containers and logs
+  block_device_mappings {
+    device_name = "/dev/sda1"
+
+    ebs {
+      volume_size           = 20
+      volume_type           = "gp3"
+      encrypted             = true
+      delete_on_termination = true
+    }
+  }
+
+  user_data = base64encode(<<-EOF
+    #!/bin/bash
+    set -euo pipefail
+
+    # Save all output to a log file so failed boots can be investigated
+    exec > >(tee -a /var/log/docker-host-setup.log) 2>&1
+
+    # Retry a command up to 5 times, 15 seconds apart,
+    # so a short network blip doesn't leave a host without Docker
+    retry() {
+      local attempt=1
+      until "$@"; do
+        if [ "$attempt" -ge 5 ]; then
+          echo "FAILED after $attempt attempts: $*"
+          return 1
+        fi
+        echo "Attempt $attempt failed: $*. Retrying in 15 seconds..."
+        attempt=$((attempt + 1))
+        sleep 15
+      done
+    }
+
+    # Wait up to 5 minutes if Ubuntu's automatic updates are holding the apt lock
+    APT="apt-get -o DPkg::Lock::Timeout=300"
+
+    # Install Docker Engine from Docker's official repository
+    retry $APT update -y
+    retry $APT install -y ca-certificates curl gnupg
+    install -m 0755 -d /etc/apt/keyrings
+    retry curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /tmp/docker.gpg
+    gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg /tmp/docker.gpg
+    chmod a+r /etc/apt/keyrings/docker.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
+    retry $APT update -y
+    retry $APT install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+    # Docker daemon settings:
+    # - rotate container logs so the disk never fills up
+    # - keep containers running if the Docker daemon restarts
+    # The daemon only listens on the local socket, never on a network port
+    mkdir -p /etc/docker
+    cat > /etc/docker/daemon.json <<'JSON'
+    {
+      "log-driver": "json-file",
+      "log-opts": { "max-size": "10m", "max-file": "3" },
+      "live-restore": true
+    }
+    JSON
+
+    # Folder for any persistent application data
+    mkdir -p /opt/bankapp/data
+    chown ubuntu:ubuntu /opt/bankapp/data
+
+    # Only root and the ubuntu user (used by Ansible) can control Docker
+    usermod -aG docker ubuntu
+
+    # Start Docker now and on every boot
+    systemctl enable docker
+    systemctl restart docker
+
+    # Confirm Docker is actually running before marking setup complete
+    systemctl is-active --quiet docker
+    echo "Docker host setup completed successfully"
+  EOF
+  )
+
+  tag_specifications {
+    resource_type = "instance"
 
     tags = {
-      Name    = "19thoct-sonarqube-disk"
+      Name    = "19thoct-docker-host"
       Project = "19thoct"
-      Backup  = "sonarqube-daily"
+      Role    = "docker-host"
     }
   }
 
   tags = {
-    Name    = "19thoct-sonarqube"
+    Name    = "19thoct-docker-hosts-lt"
     Project = "19thoct"
   }
-  }
-  resource "aws_dlm_lifecycle_policy" "sonarqube_backup_19thoct" {
-  description        = "Daily SonarQube disk snapshots; retain seven snapshots"
-  execution_role_arn = aws_iam_role.dlm_role_19thoct.arn
-  state              = "ENABLED"
+}
 
-  depends_on = [
-    aws_iam_role_policy_attachment.dlm_policy_19thoct
-  ]
+# Auto scaling group: keeps Docker hosts running across both private subnets
+resource "aws_autoscaling_group" "docker_hosts_asg_19thoct" {
+  name                = "19thoct-docker-hosts-asg"
+  min_size            = var.docker_min_size
+  desired_capacity    = var.docker_desired_capacity
+  max_size            = var.docker_max_size
+  vpc_zone_identifier = [aws_subnet.private_subnet_1_19thoct.id, aws_subnet.private_subnet_2_19thoct.id]
 
-  policy_details {
-    resource_types = ["VOLUME"]
+  # EC2 health checks for now. Switch to "ELB" once the load balancer target group exists.
+  # 300 seconds gives each host time to finish installing Docker before it is checked.
+  health_check_type         = "EC2"
+  health_check_grace_period = 300
 
-    target_tags = {
-      Backup = "sonarqube-daily"
-    }
-
-    schedule {
-      name = "Daily SonarQube snapshot"
-
-      create_rule {
-        interval      = 24
-        interval_unit = "HOURS"
-        times         = ["03:00"]
-      }
-
-      retain_rule {
-        count = 7
-      }
-
-      copy_tags = true
-    }
+  launch_template {
+    id      = aws_launch_template.docker_hosts_lt_19thoct.id
+    version = "$Latest"
   }
 
-  tags = {
-    Name    = "19thoct-sonarqube-backup"
-    Project = "19thoct"
+  tag {
+    key                 = "Name"
+    value               = "19thoct-docker-host"
+    propagate_at_launch = true
+  }
+
+  tag {
+    key                 = "Project"
+    value               = "19thoct"
+    propagate_at_launch = true
+  }
+}
+
+# Add hosts when average CPU goes above 70 percent, remove them when it drops
+resource "aws_autoscaling_policy" "docker_hosts_cpu_19thoct" {
+  name                   = "19thoct-docker-hosts-cpu-policy"
+  autoscaling_group_name = aws_autoscaling_group.docker_hosts_asg_19thoct.name
+  policy_type            = "TargetTrackingScaling"
+
+  target_tracking_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ASGAverageCPUUtilization"
+    }
+    target_value = 70
   }
 }
