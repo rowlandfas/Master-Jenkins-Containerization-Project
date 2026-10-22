@@ -509,15 +509,37 @@ resource "aws_launch_template" "docker_hosts_lt_19thoct" {
     #!/bin/bash
     set -euo pipefail
 
+    # Save all output to a log file so failed boots can be investigated
+    exec > >(tee -a /var/log/docker-host-setup.log) 2>&1
+
+    # Retry a command up to 5 times, 15 seconds apart,
+    # so a short network blip doesn't leave a host without Docker
+    retry() {
+      local attempt=1
+      until "$@"; do
+        if [ "$attempt" -ge 5 ]; then
+          echo "FAILED after $attempt attempts: $*"
+          return 1
+        fi
+        echo "Attempt $attempt failed: $*. Retrying in 15 seconds..."
+        attempt=$((attempt + 1))
+        sleep 15
+      done
+    }
+
+    # Wait up to 5 minutes if Ubuntu's automatic updates are holding the apt lock
+    APT="apt-get -o DPkg::Lock::Timeout=300"
+
     # Install Docker Engine from Docker's official repository
-    apt-get update -y
-    apt-get install -y ca-certificates curl gnupg
+    retry $APT update -y
+    retry $APT install -y ca-certificates curl gnupg
     install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    retry curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /tmp/docker.gpg
+    gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg /tmp/docker.gpg
     chmod a+r /etc/apt/keyrings/docker.gpg
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
-    apt-get update -y
-    apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+    retry $APT update -y
+    retry $APT install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
     # Docker daemon settings:
     # - rotate container logs so the disk never fills up
@@ -542,6 +564,10 @@ resource "aws_launch_template" "docker_hosts_lt_19thoct" {
     # Start Docker now and on every boot
     systemctl enable docker
     systemctl restart docker
+
+    # Confirm Docker is actually running before marking setup complete
+    systemctl is-active --quiet docker
+    echo "Docker host setup completed successfully"
   EOF
   )
 
