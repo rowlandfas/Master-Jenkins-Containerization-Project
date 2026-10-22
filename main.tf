@@ -427,6 +427,22 @@ resource "aws_route_table_association" "private_rta_2_19thoct" {
   route_table_id = aws_route_table.private_rt_19thoct.id
 }
 
+
+#Bastion Server
+resource "aws_instance" "bastion_19thoct" {
+  ami                    = "ami-0884bba1ac5619645"
+  instance_type          = "t3.micro"
+  subnet_id              = aws_subnet.public_subnet_1_19thoct.id
+  vpc_security_group_ids = [aws_security_group.bastion_sg_19thoct.id]
+  key_name               = aws_key_pair.key_pair_19thoct.key_name
+
+  associate_public_ip_address = true
+
+  tags = {
+    Name    = "19thoct-bastion"
+    Project = "19thoct"
+  }
+}
 # ==========================================================
 # CT-12: Nexus Server
 # Nexus stores our build artifacts (Maven) and Docker images.
