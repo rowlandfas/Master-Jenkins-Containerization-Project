@@ -430,7 +430,7 @@ resource "aws_route_table_association" "private_rta_2_19thoct" {
 
 #Bastion Server
 resource "aws_instance" "bastion_19thoct" {
-  ami                    = "ami-0884bba1ac5619645"
+  ami                    = data.aws_ami.redhat_19thoct.id
   instance_type          = "t3.micro"
   subnet_id              = aws_subnet.public_subnet_1_19thoct.id
   vpc_security_group_ids = [aws_security_group.bastion_sg_19thoct.id]
