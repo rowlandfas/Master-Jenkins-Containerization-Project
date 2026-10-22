@@ -19,6 +19,11 @@ output "private_subnet_ids" {
   value       = [aws_subnet.private_subnet_1_19thoct.id, aws_subnet.private_subnet_2_19thoct.id]
 }
 
+# Private IP of the Nexus server - we use this to reach it through the bastion
+output "nexus_private_ip" {
+  value = aws_instance.nexus_19thoct.private_ip
+}
+
 # ---------- Docker host outputs (Kenneth) ----------
 output "docker_hosts_asg_name" {
   description = "Name of the Docker hosts auto scaling group"
