@@ -45,7 +45,7 @@ Defined in `bankapp-alb.tf`.
 | Domain | `everythingops.io` |
 | Hosted zone | Public, ID `Z03461702SMK35VTE8B67` (existing, looked up with `data.aws_route53_zone.everythingops`, not created by this project) |
 | App record | `bankapp.everythingops.io`, type **A (alias)** to the BankApp ALB. Change with the `app_subdomain` variable. |
-| Certificate | ACM, DNS-validated through validation records in the same zone |
+| Certificate | One shared ACM certificate for the project (`aws_acm_certificate.bankapp_ssl` in main.tf), covering `everythingops.io` and `*.everythingops.io`, DNS-validated in the same zone |
 | HTTP | Port 80 redirects to HTTPS (301) |
 | HTTPS | Port 443, policy `ELBSecurityPolicy-TLS13-1-2-2021-06` |
 | Health check | Target group calls `app_health_check_path` (default `/`) on port 8080 |

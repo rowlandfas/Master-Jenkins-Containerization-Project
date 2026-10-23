@@ -920,30 +920,49 @@ resource "aws_dlm_lifecycle_policy" "sonarqube_backup_19thoct" {
 }
 
 #SSL CERTIFICATE
+# One shared certificate for the whole project.
+# Covers everythingops.io and every subdomain (*.everythingops.io), so the
+# BankApp, Jenkins and SonarQube load balancers can all use it.
 resource "aws_acm_certificate" "bankapp_ssl" {
-  domain_name       = "everythingops.io"
-  validation_method = "DNS"
+  domain_name               = "everythingops.io"
+  subject_alternative_names = ["*.everythingops.io"]
+  validation_method         = "DNS"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  tags = {
+    Name    = "19thoct-shared-certificate"
+    Project = "19thoct"
+  }
 }
+
 data "aws_route53_zone" "bankapp_zone" {
   name         = "everythingops.io."
   private_zone = false
 }
+
+# everythingops.io and *.everythingops.io share the same validation record,
+# so records are keyed by record name to avoid creating the same one twice
 resource "aws_route53_record" "bankapp_validation" {
   for_each = {
     for form in aws_acm_certificate.bankapp_ssl.domain_validation_options :
-    form.domain_name => {
+    form.resource_record_name => {
       name   = form.resource_record_name
       record = form.resource_record_value
       type   = form.resource_record_type
-    }
+    }...
   }
 
-  zone_id = data.aws_route53_zone.bankapp_zone.zone_id
-  name    = each.value.name
-  type    = each.value.type
-  records = [each.value.record]
-  ttl     = 60
+  zone_id         = data.aws_route53_zone.bankapp_zone.zone_id
+  name            = each.value[0].name
+  type            = each.value[0].type
+  records         = [each.value[0].record]
+  ttl             = 60
+  allow_overwrite = true
 }
+
 resource "aws_acm_certificate_validation" "bankapp_ssl_validation" {
   certificate_arn         = aws_acm_certificate.bankapp_ssl.arn
   validation_record_fqdns = [for record in aws_route53_record.bankapp_validation : record.fqdn]

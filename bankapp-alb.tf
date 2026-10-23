@@ -10,51 +10,8 @@ locals {
   bankapp_domain = "${var.app_subdomain}.everythingops.io"
 }
 
-# =========================================================
-# HTTPS certificate for the BankApp domain
-# =========================================================
-
-resource "aws_acm_certificate" "bankapp_19thoct" {
-  domain_name       = local.bankapp_domain
-  validation_method = "DNS"
-
-  lifecycle {
-    create_before_destroy = true
-  }
-
-  tags = {
-    Name    = "19thoct-bankapp-certificate"
-    Project = "19thoct"
-  }
-}
-
-# DNS records that prove to ACM we own the domain
-resource "aws_route53_record" "bankapp_certificate_validation" {
-  for_each = {
-    for option in aws_acm_certificate.bankapp_19thoct.domain_validation_options :
-    option.domain_name => {
-      name  = option.resource_record_name
-      type  = option.resource_record_type
-      value = option.resource_record_value
-    }
-  }
-
-  zone_id = data.aws_route53_zone.everythingops.zone_id
-  name    = each.value.name
-  type    = each.value.type
-  ttl     = 300
-  records = [each.value.value]
-}
-
-# Waits until ACM confirms the certificate is issued
-resource "aws_acm_certificate_validation" "bankapp_19thoct" {
-  certificate_arn = aws_acm_certificate.bankapp_19thoct.arn
-
-  validation_record_fqdns = [
-    for record in aws_route53_record.bankapp_certificate_validation :
-    record.fqdn
-  ]
-}
+# HTTPS uses the project's shared certificate (everythingops.io and
+# *.everythingops.io), defined in main.tf as aws_acm_certificate.bankapp_ssl
 
 # =========================================================
 # Public Application Load Balancer
@@ -140,14 +97,14 @@ resource "aws_lb_listener" "bankapp_http_19thoct" {
   }
 }
 
-# HTTPS: decrypt with the ACM certificate and forward to the Docker hosts
+# HTTPS: decrypt with the shared ACM certificate and forward to the Docker hosts
 resource "aws_lb_listener" "bankapp_https_19thoct" {
   load_balancer_arn = aws_lb.bankapp_19thoct.arn
   port              = 443
   protocol          = "HTTPS"
   ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
 
-  certificate_arn = aws_acm_certificate_validation.bankapp_19thoct.certificate_arn
+  certificate_arn = aws_acm_certificate_validation.bankapp_ssl_validation.certificate_arn
 
   default_action {
     type             = "forward"
