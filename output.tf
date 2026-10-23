@@ -58,6 +58,9 @@ output "jenkins_private_url" {
   value       = "http://${aws_instance.jenkins_19thoct.private_ip}:8080"
 }
 
+# The web address for Nexus
+output "nexus_url" {
+  value = "https://${aws_route53_record.nexus_dns_19thoct.name}"
 output "sonarqube_url" {
   description = "SonarQube HTTPS URL accessible through private networking"
   value       = "https://${aws_route53_record.sonarqube_19thoct.fqdn}"
@@ -76,4 +79,15 @@ output "jenkins_alb_dns_name" {
 output "jenkins_https_url" {
   description = "HTTPS address for accessing Jenkins"
   value       = "https://${aws_route53_record.jenkins_19thoct.name}"
+}
+
+# ---------- BankApp domain outputs (Kenneth) ----------
+output "bankapp_url" {
+  description = "Public HTTPS address of the BankApp"
+  value       = "https://${aws_route53_record.bankapp_19thoct.fqdn}"
+}
+
+output "bankapp_alb_dns_name" {
+  description = "AWS DNS name of the BankApp load balancer"
+  value       = aws_lb.bankapp_19thoct.dns_name
 }
