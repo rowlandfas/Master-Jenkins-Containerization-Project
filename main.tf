@@ -93,10 +93,15 @@ resource "aws_security_group" "jenkins_sg_19thoct" {
   }
 
   ingress {
+    description = "Jenkins access from load balancer and bastion"
     from_port   = 8080
     to_port     = 8080
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+
+    security_groups = [
+      aws_security_group.jenkins_alb_19thoct.id,
+      aws_security_group.bastion_sg_19thoct.id
+    ]
   }
 
   egress {
@@ -802,7 +807,7 @@ resource "aws_instance" "jenkins_19thoct" {
   # Recreate the instance when its installation script changes.
   user_data_replace_on_change = true
 
-    user_data = <<-EOF
+  user_data = <<-EOF
     #!/bin/bash
     set -euo pipefail
 
