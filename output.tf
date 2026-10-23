@@ -61,6 +61,8 @@ output "jenkins_private_url" {
 # The web address for Nexus
 output "nexus_url" {
   value = "https://${aws_route53_record.nexus_dns_19thoct.name}"
+}
+
 output "sonarqube_url" {
   description = "SonarQube HTTPS URL accessible through private networking"
   value       = "https://${aws_route53_record.sonarqube_19thoct.fqdn}"

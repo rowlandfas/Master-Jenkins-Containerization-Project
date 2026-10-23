@@ -1054,6 +1054,8 @@ resource "aws_route53_record" "nexus_dns_19thoct" {
     zone_id                = aws_lb.nexus_alb_19thoct.zone_id
     evaluate_target_health = true
   }
+}
+
 #SSL CERTIFICATE
 # One shared certificate for the whole project.
 # Covers everythingops.io and every subdomain (*.everythingops.io), so the
