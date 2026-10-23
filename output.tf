@@ -80,3 +80,14 @@ output "jenkins_https_url" {
   description = "HTTPS address for accessing Jenkins"
   value       = "https://${aws_route53_record.jenkins_19thoct.name}"
 }
+
+# ---------- BankApp domain outputs (Kenneth) ----------
+output "bankapp_url" {
+  description = "Public HTTPS address of the BankApp"
+  value       = "https://${aws_route53_record.bankapp_19thoct.fqdn}"
+}
+
+output "bankapp_alb_dns_name" {
+  description = "AWS DNS name of the BankApp load balancer"
+  value       = aws_lb.bankapp_19thoct.dns_name
+}
