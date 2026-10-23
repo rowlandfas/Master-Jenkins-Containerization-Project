@@ -1,5 +1,0 @@
-vault_nexus_user: "CHANGE_ME"
-vault_nexus_password: "CHANGE_ME"
-vault_db_user: "CHANGE_ME"
-vault_db_password: "CHANGE_ME"
-vault_dockerhub_token: "CHANGE_ME"
