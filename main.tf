@@ -93,10 +93,15 @@ resource "aws_security_group" "jenkins_sg_19thoct" {
   }
 
   ingress {
+    description = "Jenkins access from load balancer and bastion"
     from_port   = 8080
     to_port     = 8080
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+
+    security_groups = [
+      aws_security_group.jenkins_alb_19thoct.id,
+      aws_security_group.bastion_sg_19thoct.id
+    ]
   }
 
   egress {
@@ -563,38 +568,6 @@ resource "aws_dlm_lifecycle_policy" "nexus_backup_19thoct" {
   }
 }
 
-# ===============================================
-# Ansible Server (public subnet 2)
-# Runs the playbooks that build and deploy BankApp
-# ===============================================
-resource "aws_instance" "ansible_19thoct" {
-  ami                         = data.aws_ami.redhat_19thoct.id
-  instance_type               = "t3.small"
-  subnet_id                   = aws_subnet.public_subnet_2_19thoct.id
-  vpc_security_group_ids      = [aws_security_group.ansible_sg_19thoct.id]
-  associate_public_ip_address = true
-  key_name                    = aws_key_pair.key_pair_19thoct.key_name
-
-  root_block_device {
-    volume_size = 20
-    volume_type = "gp3"
-  }
-
-  user_data = <<-EOF
-    #!/bin/bash
-    dnf update -y
-    dnf install -y ansible-core git python3-pip
-    hostnamectl set-hostname ansible-19thoct
-    echo "preserve_hostname: true" > /etc/cloud/cloud.cfg.d/99_hostname.cfg
-    sudo -u ec2-user ansible-galaxy collection install community.docker
-  EOF
-
-  tags = {
-    Name    = "19thoct-ansible"
-    Project = "19thoct"
-  }
-}
-
 # ---------- Docker hosts (Kenneth) ----------
 
 # The Docker hosts use the same Red Hat Enterprise Linux 9 image as Nexus
@@ -678,27 +651,6 @@ resource "aws_launch_template" "docker_hosts_lt_19thoct" {
     Project = "19thoct"
   }
 }
-
-#creating m-node redhat instance
-resource "aws_instance" "redhate_19thoct" {
-  ami                         = data.aws_ami.redhat_19thoct.id
-  instance_type               = "t3.small"
-  subnet_id                   = aws_subnet.public_subnet_2_19thoct.id
-  vpc_security_group_ids      = [aws_security_group.ansible_sg_19thoct.id]
-  associate_public_ip_address = true
-  key_name                    = aws_key_pair.key_pair_19thoct.key_name
-
-  root_block_device {
-    volume_size = 20
-    volume_type = "gp3"
-  }
-
-  tags = {
-    Name    = "19thoct-mnode"
-    Project = "19thoct"
-  }
-}
-
 
 # Auto scaling group: keeps Docker hosts running across both private subnets
 resource "aws_autoscaling_group" "docker_hosts_asg_19thoct" {
@@ -802,7 +754,7 @@ resource "aws_instance" "jenkins_19thoct" {
   # Recreate the instance when its installation script changes.
   user_data_replace_on_change = true
 
-    user_data = <<-EOF
+  user_data = <<-EOF
     #!/bin/bash
     set -euo pipefail
 
@@ -965,4 +917,34 @@ resource "aws_dlm_lifecycle_policy" "sonarqube_backup_19thoct" {
     Name    = "19thoct-sonarqube-backup"
     Project = "19thoct"
   }
+}
+
+#SSL CERTIFICATE
+resource "aws_acm_certificate" "bankapp_ssl" {
+  domain_name       = "everythingops.io"
+  validation_method = "DNS"
+}
+data "aws_route53_zone" "bankapp_zone" {
+  name         = "everythingops.io."
+  private_zone = false
+}
+resource "aws_route53_record" "bankapp_validation" {
+  for_each = {
+    for form in aws_acm_certificate.bankapp_ssl.domain_validation_options :
+    form.domain_name => {
+      name   = form.resource_record_name
+      record = form.resource_record_value
+      type   = form.resource_record_type
+    }
+  }
+
+  zone_id = data.aws_route53_zone.bankapp_zone.zone_id
+  name    = each.value.name
+  type    = each.value.type
+  records = [each.value.record]
+  ttl     = 60
+}
+resource "aws_acm_certificate_validation" "bankapp_ssl_validation" {
+  certificate_arn         = aws_acm_certificate.bankapp_ssl.arn
+  validation_record_fqdns = [for record in aws_route53_record.bankapp_validation : record.fqdn]
 }

@@ -67,6 +67,17 @@ output "sonarqube_alb_dns_name" {
   description = "Internal SonarQube ALB DNS name"
   value       = aws_lb.sonarqube_19thoct.dns_name
 }
+
+output "jenkins_alb_dns_name" {
+  description = "AWS DNS name of the Jenkins load balancer"
+  value       = aws_lb.jenkins_19thoct.dns_name
+}
+
+output "jenkins_https_url" {
+  description = "HTTPS address for accessing Jenkins"
+  value       = "https://${aws_route53_record.jenkins_19thoct.name}"
+}
+
 # ---------- BankApp domain outputs (Kenneth) ----------
 output "bankapp_url" {
   description = "Public HTTPS address of the BankApp"
