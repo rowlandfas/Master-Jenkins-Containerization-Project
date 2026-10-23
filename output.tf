@@ -67,3 +67,13 @@ output "sonarqube_alb_dns_name" {
   description = "Internal SonarQube ALB DNS name"
   value       = aws_lb.sonarqube_19thoct.dns_name
 }
+# ---------- BankApp domain outputs (Kenneth) ----------
+output "bankapp_url" {
+  description = "Public HTTPS address of the BankApp"
+  value       = "https://${aws_route53_record.bankapp_19thoct.fqdn}"
+}
+
+output "bankapp_alb_dns_name" {
+  description = "AWS DNS name of the BankApp load balancer"
+  value       = aws_lb.bankapp_19thoct.dns_name
+}

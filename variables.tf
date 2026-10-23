@@ -28,3 +28,16 @@ variable "docker_max_size" {
   type        = number
   default     = 3
 }
+
+# ---------- BankApp domain and load balancer (Kenneth) ----------
+variable "app_subdomain" {
+  description = "Subdomain of everythingops.io for the BankApp, e.g. bankapp -> bankapp.everythingops.io"
+  type        = string
+  default     = "bankapp"
+}
+
+variable "app_health_check_path" {
+  description = "Path the load balancer calls on each Docker host to check the app is healthy"
+  type        = string
+  default     = "/"
+}
