@@ -93,10 +93,15 @@ resource "aws_security_group" "jenkins_sg_19thoct" {
   }
 
   ingress {
+    description = "Jenkins access from load balancer and bastion"
     from_port   = 8080
     to_port     = 8080
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+
+    security_groups = [
+      aws_security_group.jenkins_alb_19thoct.id,
+      aws_security_group.bastion_sg_19thoct.id
+    ]
   }
 
   egress {
@@ -749,7 +754,7 @@ resource "aws_instance" "jenkins_19thoct" {
   # Recreate the instance when its installation script changes.
   user_data_replace_on_change = true
 
-    user_data = <<-EOF
+  user_data = <<-EOF
     #!/bin/bash
     set -euo pipefail
 
@@ -912,4 +917,34 @@ resource "aws_dlm_lifecycle_policy" "sonarqube_backup_19thoct" {
     Name    = "19thoct-sonarqube-backup"
     Project = "19thoct"
   }
+}
+
+#SSL CERTIFICATE
+resource "aws_acm_certificate" "bankapp-ssl" {
+  domain_name = "everythingops.io"
+  validation_method ="DNS"   
+}
+data "aws_route53_zone" "bankapp_zone" {
+  name         = "everythingops.io."
+  private_zone = false
+}
+resource "aws_route53_record" "bankapp_validation" {
+  for_each = {
+    for form in aws_acm_certificate.bankapp_ssl.domain_validation_options :
+    form.domain_name => {
+      name   = form.resource_record_name
+      record = form.resource_record_value
+      type   = form.resource_record_type
+    }
+  }
+
+  zone_id = data.aws_route53_zone.bankapp_zone.zone_id
+  name    = each.value.name
+  type    = each.value.type
+  records = [each.value.record]
+  ttl     = 60
+}
+resource "aws_acm_certificate_validation" "bankapp_ssl_validation" {
+  certificate_arn         = aws_acm_certificate.bankapp_ssl.arn
+  validation_record_fqdns = [for record in aws_route53_record.bankapp_validation : record.fqdn]
 }

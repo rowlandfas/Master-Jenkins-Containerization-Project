@@ -57,3 +57,23 @@ output "jenkins_private_url" {
   description = "Internal Jenkins URL, accessible through private connectivity"
   value       = "http://${aws_instance.jenkins_19thoct.private_ip}:8080"
 }
+
+output "sonarqube_url" {
+  description = "SonarQube HTTPS URL accessible through private networking"
+  value       = "https://${aws_route53_record.sonarqube_19thoct.fqdn}"
+}
+
+output "sonarqube_alb_dns_name" {
+  description = "Internal SonarQube ALB DNS name"
+  value       = aws_lb.sonarqube_19thoct.dns_name
+}
+
+output "jenkins_alb_dns_name" {
+  description = "AWS DNS name of the Jenkins load balancer"
+  value       = aws_lb.jenkins_19thoct.dns_name
+}
+
+output "jenkins_https_url" {
+  description = "HTTPS address for accessing Jenkins"
+  value       = "https://${aws_route53_record.jenkins_19thoct.name}"
+}
