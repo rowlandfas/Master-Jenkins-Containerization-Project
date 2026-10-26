@@ -1055,10 +1055,7 @@ resource "aws_route53_record" "nexus_dns_19thoct" {
     evaluate_target_health = true
   }
 }
-<<<<<<< HEAD
 
-=======
->>>>>>> ed1a1d7ff95f903322caec78e47d11ebcc5b4378
 #SSL CERTIFICATE
 # One shared certificate for the whole project.
 # Covers everythingops.io and every subdomain (*.everythingops.io), so the
