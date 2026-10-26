@@ -62,16 +62,13 @@ resource "aws_security_group" "sonarqube_alb_19thoct" {
   vpc_id      = aws_vpc.vpc_19thoct.id
 
   ingress {
-    description = "HTTPS from bastion and Jenkins"
+    description = "HTTPS"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
 
-    security_groups = [
-      aws_security_group.bastion_sg_19thoct.id,
-      aws_security_group.jenkins_sg_19thoct.id
-    ]
-  }
+      }
 
   egress {
     description     = "Application traffic and health checks to SonarQube"
@@ -93,7 +90,7 @@ resource "aws_security_group" "sonarqube_alb_19thoct" {
 
 resource "aws_lb" "sonarqube_19thoct" {
   name               = "19thoct-sonarqube-alb"
-  internal           = true
+  internal           = false
   load_balancer_type = "application"
 
   security_groups = [
@@ -101,8 +98,8 @@ resource "aws_lb" "sonarqube_19thoct" {
   ]
 
   subnets = [
-    aws_subnet.private_subnet_1_19thoct.id,
-    aws_subnet.private_subnet_2_19thoct.id
+    aws_subnet.public_subnet_1_19thoct.id,
+    aws_subnet.public_subnet_2_19thoct.id
   ]
 
   drop_invalid_header_fields = true
