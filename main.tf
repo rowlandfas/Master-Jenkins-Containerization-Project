@@ -1083,18 +1083,17 @@ data "aws_route53_zone" "bankapp_zone" {
 # so records are keyed by record name to avoid creating the same one twice
 resource "aws_route53_record" "bankapp_validation" {
   for_each = {
-    for form in aws_acm_certificate.bankapp_ssl.domain_validation_options :
-    form.resource_record_name => {
-      name   = form.resource_record_name
-      record = form.resource_record_value
-      type   = form.resource_record_type
-    }...
+    for dvo in aws_acm_certificate.bankapp_ssl.domain_validation_options : dvo.domain_name => {
+       name = dvo.resource_record_name
+       record = dvo.resource_record_value
+       type = dvo.resource_record_type
+    }
   }
 
   zone_id         = data.aws_route53_zone.bankapp_zone.zone_id
-  name            = each.value[0].name
-  type            = each.value[0].type
-  records         = [each.value[0].record]
+  name            = each.value.name
+  type            = each.value.type
+  records         = [each.value.record]
   ttl             = 60
   allow_overwrite = true
 }
