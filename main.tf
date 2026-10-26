@@ -1081,21 +1081,23 @@ data "aws_route53_zone" "bankapp_zone" {
 }
 
 # everythingops.io and *.everythingops.io share the same validation record,
-# so records are keyed by record name to avoid creating the same one twice
+# so only one record is needed. It is keyed by domain name (known at plan
+# time) and created once, from the root domain's validation option.
 resource "aws_route53_record" "bankapp_validation" {
   for_each = {
     for form in aws_acm_certificate.bankapp_ssl.domain_validation_options :
-    form.resource_record_name => {
+    form.domain_name => {
       name   = form.resource_record_name
       record = form.resource_record_value
       type   = form.resource_record_type
-    }...
+    }
+    if form.domain_name == "everythingops.io"
   }
 
   zone_id         = data.aws_route53_zone.bankapp_zone.zone_id
-  name            = each.value[0].name
-  type            = each.value[0].type
-  records         = [each.value[0].record]
+  name            = each.value.name
+  type            = each.value.type
+  records         = [each.value.record]
   ttl             = 60
   allow_overwrite = true
 }
