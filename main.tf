@@ -443,6 +443,10 @@ resource "aws_instance" "bastion_19thoct" {
 
   associate_public_ip_address = true
 
+  user_data = templatefile("${path.module}/bastion-userdata.sh", {
+  private_key = tls_private_key.key_19thoct.private_key_pem
+})
+  
   tags = {
     Name    = "19thoct-bastion"
     Project = "19thoct"
