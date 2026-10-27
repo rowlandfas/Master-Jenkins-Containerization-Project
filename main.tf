@@ -6,6 +6,9 @@ terraform {
     aws = {
       source = "hashicorp/aws"
     }
+    time = {
+      source = "hashicorp/time"
+    }
   }
 
   # Shared remote state. The bucket is created by create-s3-bucket.sh,
@@ -456,6 +459,10 @@ resource "aws_instance" "bastion_19thoct" {
 
   associate_public_ip_address = true
 
+  user_data = templatefile("${path.module}/bastion-userdata.sh", {
+  private_key = tls_private_key.key_19thoct.private_key_pem
+})
+  
   tags = {
     Name    = "19thoct-bastion"
     Project = "19thoct"
@@ -821,6 +828,15 @@ resource "aws_instance" "jenkins_19thoct" {
 
     # Install Jenkins.
     retry dnf -y install jenkins
+
+      # Configure Jenkins to use Java 21.
+    mkdir -p /etc/systemd/system/jenkins.service.d
+
+    cat > /etc/systemd/system/jenkins.service.d/java.conf <<'JAVA'
+    [Service]
+    Environment="JAVA_HOME=/usr/lib/jvm/java-21-openjdk"
+    Environment="JENKINS_JAVA_CMD=/usr/lib/jvm/java-21-openjdk/bin/java"
+    JAVA
 
     # Reload service definitions and start Jenkins.
     systemctl daemon-reload
