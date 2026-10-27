@@ -92,3 +92,14 @@ output "bankapp_alb_dns_name" {
   description = "AWS DNS name of the BankApp load balancer"
   value       = aws_lb.bankapp_19thoct.dns_name
 }
+
+output "sonarqube_instance_id" {
+  description = "SonarQube EC2 instance ID"
+  value       = aws_instance.sonarqube_19thoct.id
+}
+
+output "sonarqube_private_ip" {
+  description = "Private IP address of the SonarQube server"
+  value       = aws_instance.sonarqube_19thoct.private_ip
+}
+
