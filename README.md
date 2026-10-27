@@ -85,3 +85,50 @@ curl -I https://bankapp.everythingops.io
 ```
 
 New records usually resolve within a few minutes. If `dig` returns nothing, query the AWS name server directly (as above) to confirm the record exists, then wait for propagation.
+
+## Terraform state (S3 remote backend)
+
+The Terraform state is stored in S3 so the whole team works from one shared, locked copy instead of a file on one laptop.
+
+| Item | Value |
+|---|---|
+| Bucket | `oct-2026-state-s3bucket` (eu-west-3) |
+| State key | `19thoct-bankapp/terraform.tfstate` |
+| Versioning | On, so any earlier state can be restored |
+| Encryption | SSE-S3 (AES256); the state holds secrets such as the generated private key |
+| Public access | Fully blocked; a bucket policy also refuses non-HTTPS requests |
+| Locking | S3-native lock file (`use_lockfile = true`, Terraform 1.10+); no DynamoDB table needed |
+
+The bucket is created by `create-s3-bucket.sh`, **not** by Terraform, so `terraform destroy` can never delete the state.
+
+### Order of operations
+
+Create: run `create-s3-bucket.sh` first, then `terraform init`, then `terraform apply`.
+
+Destroy: run `terraform destroy` first, then `delete-s3-bucket.sh` last.
+
+### First-time setup
+
+```bash
+export AWS_PROFILE=cloudhight
+./create-s3-bucket.sh
+terraform init
+```
+
+### Moving an existing local state into S3 (one person, once)
+
+Whoever holds the current `terraform.tfstate` runs this after pulling the backend change:
+
+```bash
+terraform init -migrate-state
+```
+
+Answer `yes` when asked to copy the state. Then confirm with `terraform state list`, and delete the local `terraform.tfstate` and `terraform.tfstate.backup` files. Everyone else only runs `terraform init`.
+
+### If a lock gets stuck
+
+If a run is interrupted, Terraform may report the state is locked. Check nobody else is applying, then:
+
+```bash
+terraform force-unlock <LOCK_ID>
+```

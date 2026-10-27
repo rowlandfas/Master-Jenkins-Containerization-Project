@@ -1,4 +1,7 @@
 terraform {
+  # use_lockfile (S3-native state locking) needs Terraform 1.10 or later
+  required_version = ">= 1.10.0"
+
   required_providers {
     aws = {
       source = "hashicorp/aws"
@@ -6,6 +9,16 @@ terraform {
     time = {
       source = "hashicorp/time"
     }
+  }
+
+  # Shared remote state. The bucket is created by create-s3-bucket.sh,
+  # outside Terraform, so terraform destroy can never delete it.
+  backend "s3" {
+    bucket       = "oct-2026-state-s3bucket"
+    key          = "19thoct-bankapp/terraform.tfstate"
+    region       = "eu-west-3"
+    encrypt      = true
+    use_lockfile = true
   }
 }
 
@@ -1071,6 +1084,7 @@ resource "aws_route53_record" "nexus_dns_19thoct" {
     evaluate_target_health = true
   }
 }
+
 #SSL CERTIFICATE
 # One shared certificate for the whole project.
 # Covers everythingops.io and every subdomain (*.everythingops.io), so the
@@ -1096,14 +1110,17 @@ data "aws_route53_zone" "bankapp_zone" {
 }
 
 # everythingops.io and *.everythingops.io share the same validation record,
-# so records are keyed by record name to avoid creating the same one twice
+# so only one record is needed. It is keyed by domain name (known at plan
+# time) and created once, from the root domain's validation option.
 resource "aws_route53_record" "bankapp_validation" {
   for_each = {
-    for dvo in aws_acm_certificate.bankapp_ssl.domain_validation_options : dvo.domain_name => {
-      name   = dvo.resource_record_name
-      record = dvo.resource_record_value
-      type   = dvo.resource_record_type
+    for form in aws_acm_certificate.bankapp_ssl.domain_validation_options :
+    form.domain_name => {
+      name   = form.resource_record_name
+      record = form.resource_record_value
+      type   = form.resource_record_type
     }
+    if form.domain_name == "everythingops.io"
   }
 
   zone_id         = data.aws_route53_zone.bankapp_zone.zone_id
