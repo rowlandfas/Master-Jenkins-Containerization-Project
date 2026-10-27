@@ -74,6 +74,7 @@ output "jenkins_private_url" {
 output "nexus_url" {
   value = "https://${aws_route53_record.nexus_dns_19thoct.name}"
 }
+
 output "sonarqube_url" {
   description = "SonarQube HTTPS URL accessible through private networking"
   value       = "https://${aws_route53_record.sonarqube_19thoct.fqdn}"
@@ -104,3 +105,14 @@ output "bankapp_alb_dns_name" {
   description = "AWS DNS name of the BankApp load balancer"
   value       = aws_lb.bankapp_19thoct.dns_name
 }
+
+output "sonarqube_instance_id" {
+  description = "SonarQube EC2 instance ID"
+  value       = aws_instance.sonarqube_19thoct.id
+}
+
+output "sonarqube_private_ip" {
+  description = "Private IP address of the SonarQube server"
+  value       = aws_instance.sonarqube_19thoct.private_ip
+}
+
