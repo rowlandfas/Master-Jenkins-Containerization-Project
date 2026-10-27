@@ -102,10 +102,10 @@ resource "aws_security_group" "jenkins_sg_19thoct" {
   vpc_id      = aws_vpc.vpc_19thoct.id
 
   ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    security_groups = [aws_security_group.bastion_sg_19thoct.id] 
+    from_port       = 22
+    to_port         = 22
+    protocol        = "tcp"
+    security_groups = [aws_security_group.bastion_sg_19thoct.id]
   }
 
   ingress {
@@ -140,10 +140,10 @@ resource "aws_security_group" "ansible_sg_19thoct" {
   vpc_id      = aws_vpc.vpc_19thoct.id
 
   ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    security_groups = [aws_security_group.bastion_sg_19thoct.id] 
+    from_port       = 22
+    to_port         = 22
+    protocol        = "tcp"
+    security_groups = [aws_security_group.bastion_sg_19thoct.id]
   }
 
   egress {
@@ -205,10 +205,10 @@ resource "aws_security_group" "sonarqube_sg_19thoct" {
   }
 
   ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    security_groups = [aws_security_group.bastion_sg_19thoct.id] 
+    from_port       = 22
+    to_port         = 22
+    protocol        = "tcp"
+    security_groups = [aws_security_group.bastion_sg_19thoct.id]
   }
 
   egress {
@@ -234,14 +234,14 @@ resource "aws_security_group" "nexus_sg_19thoct" {
     from_port   = 8081
     to_port     = 8081
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] 
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    security_groups = [aws_security_group.bastion_sg_19thoct.id] 
+    from_port       = 22
+    to_port         = 22
+    protocol        = "tcp"
+    security_groups = [aws_security_group.bastion_sg_19thoct.id]
   }
 
   ingress {
@@ -460,9 +460,9 @@ resource "aws_instance" "bastion_19thoct" {
   associate_public_ip_address = true
 
   user_data = templatefile("${path.module}/bastion-userdata.sh", {
-  private_key = tls_private_key.key_19thoct.private_key_pem
-})
-  
+    private_key = tls_private_key.key_19thoct.private_key_pem
+  })
+
   tags = {
     Name    = "19thoct-bastion"
     Project = "19thoct"
@@ -1114,6 +1114,10 @@ data "aws_route53_zone" "bankapp_zone" {
 # time) and created once, from the root domain's validation option.
 resource "aws_route53_record" "bankapp_validation" {
   for_each = {
+    for dvo in aws_acm_certificate.bankapp_ssl.domain_validation_options : dvo.domain_name => {
+      name   = dvo.resource_record_name
+      record = dvo.resource_record_value
+      type   = dvo.resource_record_type
     for form in aws_acm_certificate.bankapp_ssl.domain_validation_options :
     form.domain_name => {
       name   = form.resource_record_name

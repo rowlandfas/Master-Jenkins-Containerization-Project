@@ -68,7 +68,7 @@ resource "aws_security_group" "sonarqube_alb_19thoct" {
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
 
-      }
+  }
 
   egress {
     description     = "Application traffic and health checks to SonarQube"
