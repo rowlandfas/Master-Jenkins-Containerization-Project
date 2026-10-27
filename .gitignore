@@ -47,3 +47,7 @@ terraform.rc
 ansible/group_vars/all/vault.yml
 .vault_pass
  *retry
+
+# Private keys and saved Terraform plans
+*.pem
+*.tfplan
