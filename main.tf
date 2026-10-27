@@ -105,7 +105,7 @@ resource "aws_security_group" "jenkins_sg_19thoct" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    security_groups = [aws_security_group.bastion_sg_19thoct.id] 
   }
 
   ingress {
@@ -143,7 +143,7 @@ resource "aws_security_group" "ansible_sg_19thoct" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    security_groups = [aws_security_group.bastion_sg_19thoct.id] 
   }
 
   egress {
@@ -201,14 +201,14 @@ resource "aws_security_group" "sonarqube_sg_19thoct" {
     from_port   = 9000
     to_port     = 9000
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["0.0.0.0/0"] #bastion sg?
   }
 
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    security_groups = [aws_security_group.bastion_sg_19thoct.id] 
   }
 
   egress {
@@ -234,14 +234,14 @@ resource "aws_security_group" "nexus_sg_19thoct" {
     from_port   = 8081
     to_port     = 8081
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["0.0.0.0/0"] 
   }
 
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    security_groups = [aws_security_group.bastion_sg_19thoct.id] 
   }
 
   ingress {
@@ -449,7 +449,7 @@ resource "aws_route_table_association" "private_rta_2_19thoct" {
 }
 
 
-#Bastion Server
+#Bastion Server/jump server
 resource "aws_instance" "bastion_19thoct" {
   ami                    = data.aws_ami.redhat_19thoct.id
   instance_type          = "t3.micro"
