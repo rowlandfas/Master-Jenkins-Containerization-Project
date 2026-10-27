@@ -1,8 +1,21 @@
 terraform {
+  # use_lockfile (S3-native state locking) needs Terraform 1.10 or later
+  required_version = ">= 1.10.0"
+
   required_providers {
     aws = {
       source = "hashicorp/aws"
     }
+  }
+
+  # Shared remote state. The bucket is created by create-s3-bucket.sh,
+  # outside Terraform, so terraform destroy can never delete it.
+  backend "s3" {
+    bucket       = "oct-2026-state-s3bucket"
+    key          = "19thoct-bankapp/terraform.tfstate"
+    region       = "eu-west-3"
+    encrypt      = true
+    use_lockfile = true
   }
 }
 
