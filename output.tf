@@ -32,6 +32,16 @@ output "ansible_public_ip" {
 output "ansible_private_ip" {
   value = aws_instance.ansible_19thoct.private_ip
 }
+
+# Public IP of Bastion Server
+output "bastion_public_ip" {
+  value = aws_instance.bastion_19thoct.public_ip
+}
+
+# Private IP of Bastion Server
+output "bastion_private_ip" {
+  value = aws_instance.bastion_19thoct.private_ip
+}
 # ---------- Docker host outputs (Kenneth) ----------
 output "docker_hosts_asg_name" {
   description = "Name of the Docker hosts auto scaling group"
@@ -52,6 +62,8 @@ output "jenkins_private_ip" {
   description = "Private IP address of the Jenkins server"
   value       = aws_instance.jenkins_19thoct.private_ip
 }
+
+
 
 output "jenkins_private_url" {
   description = "Internal Jenkins URL, accessible through private connectivity"
