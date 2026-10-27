@@ -809,6 +809,15 @@ resource "aws_instance" "jenkins_19thoct" {
     # Install Jenkins.
     retry dnf -y install jenkins
 
+      # Configure Jenkins to use Java 21.
+    mkdir -p /etc/systemd/system/jenkins.service.d
+
+    cat > /etc/systemd/system/jenkins.service.d/java.conf <<'JAVA'
+    [Service]
+    Environment="JAVA_HOME=/usr/lib/jvm/java-21-openjdk"
+    Environment="JENKINS_JAVA_CMD=/usr/lib/jvm/java-21-openjdk/bin/java"
+    JAVA
+
     # Reload service definitions and start Jenkins.
     systemctl daemon-reload
     systemctl enable --now jenkins
@@ -1084,9 +1093,9 @@ data "aws_route53_zone" "bankapp_zone" {
 resource "aws_route53_record" "bankapp_validation" {
   for_each = {
     for dvo in aws_acm_certificate.bankapp_ssl.domain_validation_options : dvo.domain_name => {
-       name = dvo.resource_record_name
-       record = dvo.resource_record_value
-       type = dvo.resource_record_type
+      name   = dvo.resource_record_name
+      record = dvo.resource_record_value
+      type   = dvo.resource_record_type
     }
   }
 
