@@ -1135,3 +1135,14 @@ resource "aws_acm_certificate_validation" "bankapp_ssl_validation" {
   certificate_arn         = aws_acm_certificate.bankapp_ssl.arn
   validation_record_fqdns = [for record in aws_route53_record.bankapp_validation : record.fqdn]
 }
+
+#creating DB subnet group for RDS
+resource "aws_db_subnet_group" "rds_subnet_group_19thoct" {
+  name       = "19thoct-rds-subnet-group"
+  subnet_ids = [aws_subnet.private_subnet_1_19thoct.id, aws_subnet.private_subnet_2_19thoct.id]
+
+  tags = {
+    Name    = "19thoct-rds-subnet-group"
+    Project = "19thoct"
+  }
+}

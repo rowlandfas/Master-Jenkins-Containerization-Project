@@ -104,3 +104,7 @@ output "sonarqube_private_ip" {
   value       = aws_instance.sonarqube_19thoct.private_ip
 }
 
+output "rds_subnet_group_name" {
+  description = "DB subnet group name for BankApp RDS"
+  value       = aws_db_subnet_group.rds_subnet_group_19thoct.name
+}
