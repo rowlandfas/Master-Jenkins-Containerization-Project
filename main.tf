@@ -1114,10 +1114,6 @@ data "aws_route53_zone" "bankapp_zone" {
 # time) and created once, from the root domain's validation option.
 resource "aws_route53_record" "bankapp_validation" {
   for_each = {
-    for dvo in aws_acm_certificate.bankapp_ssl.domain_validation_options : dvo.domain_name => {
-      name   = dvo.resource_record_name
-      record = dvo.resource_record_value
-      type   = dvo.resource_record_type
     for form in aws_acm_certificate.bankapp_ssl.domain_validation_options :
     form.domain_name => {
       name   = form.resource_record_name
