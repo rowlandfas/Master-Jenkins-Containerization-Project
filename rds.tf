@@ -8,7 +8,7 @@
 resource "aws_db_instance" "bankapp_db_19thoct" {
   identifier     = "19thoct-bankapp-db"
   engine         = "mysql"
-  engine_version = "8.0"
+  engine_version = "8.4"
   instance_class = var.db_instance_class
 
   db_name  = "bankapp"
